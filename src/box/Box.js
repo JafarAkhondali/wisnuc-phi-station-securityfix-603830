@@ -40,14 +40,17 @@ class Box {
   }
 
   destory() {
+    this.files.clear()
+    this.files = undefined
+    this.DB = undefined
     this.ctx.unindexBox(this)
   }
 
   read(callback) {
     Promise.all([
-      new Promise((resolve, reject) => {
-        this.readTree((err, files) => err ? reject(err) : resolve(files))
-      }), 
+      // new Promise((resolve, reject) => {
+      //   this.readTree((err, files) => err ? reject(err) : resolve(files))
+      // }), 
       new Promise((resolve, reject) => this.DB.read((err, files) => err ? reject(err) : resolve(files)))
     ])
     .then(files => {
@@ -58,6 +61,7 @@ class Box {
     .catch(callback)
   }
 
+/*
   readTree(callback) {
     this.retrieveAllBranches((err, branches) => {
       if(err) return callback(err)
@@ -81,6 +85,7 @@ class Box {
       })
     })
   }
+*/
 
   /**
    * create a tweet
@@ -103,13 +108,18 @@ class Box {
         if (target) rimraf(s.filepath, () => { })  
         else return true
       })
+      // urls = urls.map(u => {
+      //   let dirname = path.dirname(u.filepath)
+      //   let newpath = path.join(dirname, u.sha256)
+      //   fs.renameSync(u.filepath, newpath)
+      //   return newpath
+      // })
 
-      urls = urls.map(u => {
+      urls =  await Promise.all(urls.map(u => new Promise((resolve, reject) => {
         let dirname = path.dirname(u.filepath)
         let newpath = path.join(dirname, u.sha256)
-        fs.renameSync(u.filepath, newpath)
-        return newpath
-      })
+        fs.rename(u.filepath, newpath, err => err ? reject(err) : resolve(newpath))
+      })))
       if(urls && urls.length) await this.ctx.blobs.storeAsync(urls)
     }
     let tweet = {
@@ -117,7 +127,7 @@ class Box {
       tweeter: props.global,
       comment: props.comment
     }
-    if(props.parent) //FIXME: check range
+    if(props.parent || props.parent === 0) //FIXME: check range
       tweet.parent = props.parent
 
     if (props.type) {
@@ -132,9 +142,32 @@ class Box {
     tweet.ctime = new Date().getTime()
     await this.DB.addAsync(tweet)
 
+    // emit
+    this.ctx.handleNewTweet({ boxUUID: this.doc.uuid, tweet })
+
     let stat = await fs.statAsync(this.DB.filePath)
     let mtime = stat.mtime.getTime()
     return { tweet, mtime }
+  }
+
+  /**
+ * create system tweet
+ * commentObj
+ * {
+ *   op: enum:'addUser', 'deleteUser', 'changeBoxName', 'createBox'
+ *   value:[]
+ * }
+ * 
+ */
+  async createDefaultTweetAsync(global, commentObj) {
+    
+    let props = {
+      global,
+      comment: JSON.stringify(commentObj),
+      type: 'boxmessage',
+    }
+
+    await this.createTweetAsync(props)
   }
 
   /**
@@ -417,7 +450,7 @@ class Box {
     else return await this.ctx.docStore.retrieveAsync(commitHash)
   }
 
-  /**
+/**
  * create a commit
  * @param {Object} props 
  * @param {string} props.root - required, hash string, root tree object

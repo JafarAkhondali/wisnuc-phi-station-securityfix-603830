@@ -10,6 +10,7 @@ const rimrafAsync = Promise.promisify(rimraf)
 const log = require('winston')
 const UUID = require('uuid')
 const deepFreeze = require('deep-freeze')
+const xattr = require('fs-xattr')
 const { saveObjectAsync } = require('../lib/utils')
 const autoname = require('../lib/autoname')
 
@@ -408,7 +409,6 @@ class VFS extends Forest {
   // the following code are experimental
   //                                                                          //
   //////////////////////////////////////////////////////////////////////////////
-
   genTmpPath () {
     return path.join(this.tmpDir, UUID.v4())
   }
@@ -587,13 +587,13 @@ class VFS extends Forest {
   // copy src file into dst dir
   cpfile (src, dst, policy, callback) {
     let srcDir, dstDir
-   
+
     try {
       srcDir = this.getDriveDirSync(src.drive, src.dir)
       dstDir = this.getDriveDirSync(dst.drive, dst.dir)
     } catch (e) {
       return process.nextTick(() => callback(e))
-    } 
+    }
 
     let srcFilePath = path.join(this.absolutePath(srcDir), src.name)
     let dstFilePath = path.join(this.absolutePath(dstDir), src.name)
@@ -601,11 +601,23 @@ class VFS extends Forest {
     let tmp = this.genTmpPath()
     clone(srcFilePath, src.uuid, tmp, (err, xstat) => {
       if (err) return callback(err)
-      mkfile(dstFilePath, tmp, xstat.hash, policy, err => {
+      mkfile(dstFilePath, tmp, xstat.hash, policy, (err, xstats, resolved) => {
         rimraf(tmp, () => {})
-        callback(err)
+        if (err) return callback(err)
+
+        if (!xstat || (policy[0] === 'skip' && xstat && resolved[0])) return
+        else {
+          try {
+            let attr = JSON.parse(xattr.getSync(srcFilePath, 'user.fruitmix'))
+            attr.uuid = xstats.uuid
+            xattr.setSync(dstFilePath, 'user.fruitmix', JSON.stringify(attr))
+          } catch (e) {
+            if (e.code !== 'ENODATA') return callback(e)
+          }
+        }
+        callback(null)
       })
-   }) 
+    })
   }
 
   // move src dir into dst dir
@@ -623,13 +635,20 @@ class VFS extends Forest {
     let newPath = path.join(this.absolutePath(dstDir), srcDir.name)
     mvdir(oldPath, newPath, policy, (err, xstat, resolved) => {
       // TODO 
+      // callback(err, xstat, resolved)
       if (err) return callback(err)
 
       if (!xstat) return callback(null, xstat, resolved)
       else {
-        srcDir.parent.read()
-        dstDir.read()
-        callback(null, xstat, resolved)
+        // srcDir.parent.read()
+        // dstDir.read()
+        srcDir.parent.read((err, xstats) => {
+          if (err) return callback(err)
+          dstDir.read((err, xstats2) => {
+            callback(null, xstat, resolved)
+          })
+        })
+        // callback(null, xstat, resolved)
       }
     })
   }
@@ -684,6 +703,12 @@ class VFS extends Forest {
     }
     dir.read(callback)
   }
+
+
+  /************************
+  new methods
+  *************************/
+
 
 }
 

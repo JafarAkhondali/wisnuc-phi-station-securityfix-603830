@@ -20,6 +20,7 @@ const Pipe = require('./pipe')
 const { MQTT, CONNECT_STATE } = require('./mqtt')
 const Tickets = require('./tickets').Tickets
 const getFruit = require('../../fruitmix')
+const BoxUpdater = require('./boxUpdater')
 
 Promise.promisifyAll(fs)
 const mkdirpAsync = Promise.promisify(mkdirp)
@@ -36,11 +37,14 @@ class Station {
     this.publicKey = undefined
     this.privateKey = undefined
     this.station = undefined
-    this.pipe = undefined
     this.initialized = false
     this.lock = false
+
     this.token = undefined
     this.mqtt = undefined
+    this.pipe = undefined
+    this.boxUpdater = undefined
+
     this.deinited = false
     this.setUp()
   }
@@ -72,6 +76,10 @@ class Station {
         debug('station start error, about to restart', e)
         setTimeout(() => {
           if(this.deinited) return
+          if(this.mqtt) {
+            this.mqtt.destory()
+            this.mqtt = undefined
+          }
           this.init(froot)
         }, 5000)
       })
@@ -96,7 +104,8 @@ class Station {
     
     this.tickets = new Tickets(this)
     this.initialized = true
-
+    this.boxUpdater = new BoxUpdater(this)
+    
     await this.updateCloudUsersAsync()
   }
 
@@ -136,6 +145,7 @@ class Station {
     this.tickets = undefined
     this.lock = false
     if(this.mqtt) this.mqtt.destory()
+    this.mqtt = undefined
     debug('station deinit')
     broadcast.emit('StationStopDone', this)
   }

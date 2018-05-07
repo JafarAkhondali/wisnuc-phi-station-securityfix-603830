@@ -16,10 +16,8 @@ const { isSHA256, isNonNullObject, isNormalizedAbsolutePath } = require('./asser
 Thumbnail is an independent module for retrieving a thumbnail.
 
 It uses `<fruitmix root>/thumbnail` as the cache directory.
-caching file name: digest (now fingerprint) + optionHash 
+caching file name: digest (now fingerprint) + optionHash
 query string: width, height, modifier, autoOrient
-
-
 
 @module thumbnail
 */
@@ -32,7 +30,7 @@ const EINTR = ERROR('EINTR', 'operation interrupted')
 const ENOENT = ERROR('ENOENT', 'entry not found')
 
 //
-// courtesy https://stackoverflow.com/questions/5467129/sort-javascript-object-by-key 
+// courtesy https://stackoverflow.com/questions/5467129/sort-javascript-object-by-key
 // for letting me know the comma operator
 const sortObject = o => Object.keys(o).sort().reduce((r, k) => (r[k] = o[k], r), {})
 
@@ -56,7 +54,7 @@ const parseQuery = query => {
   if (modifier && modifier !== 'caret') return EINVAL('unknown modifier')
 
   if (autoOrient !== undefined) {
-    if (autoOrient !== 'true') return EINVAL('invalid autoOrient') 
+    if (autoOrient !== 'true') return EINVAL('invalid autoOrient')
     autoOrient = true
   }
 
@@ -64,17 +62,17 @@ const parseQuery = query => {
 }
 
 // hash stringified option object
-const genKey = (fingerprint, opts) => fingerprint + 
+const genKey = (fingerprint, opts) => fingerprint +
   crypto.createHash('sha256').update(JSON.stringify(sortObject(opts))).digest('hex')
 
 // generate geometry string for convert
 const geometry = (width, height, modifier) => {
   let str
 
-  if (!height) { 
-    str = `${width.toString()}` 
-  } else if (!width) { 
-    str = `x${height.toString()}` 
+  if (!height) {
+    str = `${width.toString()}`
+  } else if (!width) {
+    str = `x${height.toString()}`
   } else {
     str = `${width.toString()}x${height.toString()}`
 
@@ -117,13 +115,12 @@ const spawn = (cmd, args, callback) => {
     } else {
       callback()
     }
-  }) 
+  })
 }
 
 // pipeline pattern, emit step
 class Thumbnail extends EventEmitter {
-
-  constructor(thumbDir, tmpDir, concurrency) {
+  constructor (thumbDir, tmpDir, concurrency) {
     super()
 
     this.thumbDir = thumbDir
@@ -133,7 +130,7 @@ class Thumbnail extends EventEmitter {
     mkdirp.sync(thumbDir)
     mkdirp.sync(tmpDir)
 
-    this.pending = []  
+    this.pending = []
     this.converting = []
     this.renaming = []
 
@@ -141,13 +138,13 @@ class Thumbnail extends EventEmitter {
     this.destroyed = false
   }
 
-  // { fingerprint, query, key, opt, path, file, cbs } 
-  push(x) {
+  // { fingerprint, query, key, opt, path, file, cbs }
+  push (x) {
     this.pending.push(x)
     this.schedule()
   }
 
-  schedule() {
+  schedule () {
     if (this.destroyed) return
 
     // sort pending, the more callbacks, the higher priority
@@ -155,13 +152,13 @@ class Thumbnail extends EventEmitter {
 
     while (this.converting.length < this.concurrency && this.pending.length) {
       // pending -> converting
-      let x = this.pending.shift()    
+      let x = this.pending.shift()
       this.converting.push(x)
 
       x.tmp = path.join(this.tmpDir, UUID.v4() + '.jpg')
 
       spawn('convert', genArgs(x.file, x.tmp, x.opts), err => {
-        // converting -> 
+        // converting ->
         this.converting.splice(this.converting.indexOf(x), 1)
 
         if (err) {
@@ -171,22 +168,22 @@ class Thumbnail extends EventEmitter {
         } else {
           // -> renaming
           this.renaming.push(x)
-          
+
           fs.rename(x.tmp, x.path, err => {
             // renaming -> 0
-            this.renaming.splice(this.renaming.indexOf(x), 1) 
-            x.cbs.forEach(cb => err ? cb(err) : cb(null, x.path))    
+            this.renaming.splice(this.renaming.indexOf(x), 1)
+            x.cbs.forEach(cb => err ? cb(err) : cb(null, x.path))
             x.cbs = []
 
             // no schedule
             this.emit('step', 'rename', x)
-          }) 
+          })
         }
 
-        this.schedule() 
+        this.schedule()
         this.emit('step', 'convert', x)
       })
-    }  
+    }
   }
 
   // this is mainly used for unit testing. It aborts the whole thumbnail object.
@@ -198,11 +195,11 @@ class Thumbnail extends EventEmitter {
   genProps (fingerprint, query) {
     if (!isSHA256(fingerprint)) throw new Error('invalid fingerprint')
     if (!isNonNullObject(query)) throw new Error('invalid query')
-    let opts = parseQuery(query) 
+    let opts = parseQuery(query)
     let key = genKey(fingerprint, opts)
-    
+
     return {
-      fingerprint, 
+      fingerprint,
       opts,
       key,
       path: path.join(this.thumbDir, key)
@@ -210,11 +207,11 @@ class Thumbnail extends EventEmitter {
   }
 
   // props is a thumb props
-  convert(props, file, callback) {
+  convert (props, file, callback) {
     // find existing job by key
     let job = [
-      ...this.pending, 
-      ...this.converting, 
+      ...this.pending,
+      ...this.converting,
       ...this.renaming
     ].find(j => j.key === props.key)
 
@@ -227,17 +224,10 @@ class Thumbnail extends EventEmitter {
     }
 
     return () => {
-      let index = job.cbs.indexOf(callback) 
+      let index = job.cbs.indexOf(callback)
       if (index !== -1) job.cbs.splice(index, 1)
     }
   }
-
 }
 
 module.exports = Thumbnail
-
-
-
-
-
-

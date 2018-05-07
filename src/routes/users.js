@@ -1,107 +1,43 @@
-const Promise = require('bluebird')
-const router = require('express').Router()
-const auth = require('../middleware/auth')
-const UUID = require('uuid')
-const getFruit = require('../fruitmix')
+const express = require('express')
 
-const EUnavail = Object.assign(new Error('fruitmix unavailable'), { status: 503 })
-const fruitless = (req, res, next) => getFruit() ? next() : next(EUnavail)
+/**
+@module UserRouter
+*/
+module.exports = (auth, { LIST, POST, GET, PATCH, DELETE }) => {
 
-// User List, GET
-router.get('/', fruitless, 
-  // for display users 
-  (req, res, next) => {
-    let fruit = getFruit()
-    if (req.get('Authorization')) return next()   
-    res.status(200).json(fruit.displayUsers())
-  }, 
-  auth.jwt(), 
-  // for authorized users
-  (req, res) => {
-    let fruit = getFruit()
-    if (req.user.isAdmin) {
-      res.status(200).json(fruit.getUsers())
-    } else {
-      res.status(200).json(fruit.displayUsers())
-    }
-  })
+  const f = (res, next) => (err, data) => 
+    err ? next(err) : data ? res.status(200).json(data) : res.status(200).end()
 
-// User List, POST
-router.post('/', fruitless, 
-  (req, res, next) => {
-    let fruit = getFruit()
-    if (fruit.hasUsers()) return next()
-    fruit.createUserAsync(null, req.body) 
-      .then(user => res.status(200).json(user))
-      .catch(next)
-  }, 
-  auth.jwt(), 
-  (req, res, next) => {
-    let fruit = getFruit()
-    fruit.createUserAsync(req.user, req.body) 
-      .then(user => res.status(200).json(user))
-      .catch(next)
-  })
+  let router = express.Router()
 
-// get single user 
-router.get('/:uuid', auth.jwt(), (req, res) => {
-  
-  let uuid = req.params.uuid
-  let user = req.user
+  // List
+  router.get('/', 
+    (req, res, next) => req.get('Authorization') ? next() : LIST(null, {}, f(res, next)),
+    auth.jwt(), 
+    (req, res, next) => LIST(req.user, {}, f(res, next)))
 
-  if (user.uuid === uuid) return res.status(200).json(user)
+  // POST
+  router.post('/',
+    (req, res, next) => req.get('Authorization') ? next() : POST(null, req.body, f(res, next)),
+    auth.jwt(),
+    (req, res, next) => POST(req.user, req.body, f(res, next)))
 
-  if (user.isAdmin) {
-    let u = User.findUser(uuid) 
-    if (u) 
-      res.status(200).json(u)
-    else
-      res.status(404).end()
+  // GET
+  router.get('/:userUUID', auth.jwt(), (req, res, next) =>
+    GET(req.user, { userUUID: req.params.userUUID }, f(res, next)))
 
-    return
-  }
+  // PATCH
+  router.patch('/:userUUID', (req, res, next) => {
+    if (req.body.password) return auth.basic()(req, res, next)
+    auth.jwt()(req, res, next)
+  }, (req, res, next) =>
+    PATCH(req.user, Object.assign({}, req.body, { userUUID: req.params.userUUID }), f(res, next)))
 
-  res.status(403).end() // TODO message? 
-})
+  // DELETE
+  router.delete('/:userUUID', auth.jwt(), (req, res, next) => 
+    DELETE(req.user, { userUUID: req.params.userUUID }, f(res, next)))
 
-// update name, isAdmin, disabled 
-router.patch('/:userUUID', fruitless, auth.jwt(), (req, res, next) => {
-  let { userUUID } = req.params
-  getFruit().updateUserAsync(req.user, userUUID, req.body)
-    .then(user => res.status(200).json(user))
-    .catch(next)
-})
+  return router
+}
 
-// update (own) password
-router.put('/:uuid/password', auth.basic(), (req, res, next) => {
-  getFruit().updateUserPasswordAsync(req.user, req.params.uuid, req.body)
-    .then(() => res.status(200).end())
-    .catch(next)
-})
-
-router.get('/:userUUID/media-blacklist', auth.jwt(), (req, res, next) => {
-  getFruit().getMediaBlacklistAsync(req.user)
-    .then(list => res.status(200).json(list))
-    .catch(next)
-})
-
-router.put('/:userUUID/media-blacklist', auth.jwt(), (req, res, next) => {
-  getFruit().setMediaBlacklistAsync(req.user, req.body)
-    .then(list => res.status(200).end())
-    .catch(next)
-})
-
-router.post('/:userUUID/media-blacklist', auth.jwt(), (req, res, next) => {
-  getFruit().addMediaBlacklistAsync(req.user, req.body)  
-    .then(list => res.status(200).json(list))
-    .catch(next)
-})
-
-router.delete('/:userUUID/media-blacklist', auth.jwt(), (req, res, next) => {
-  getFruit().subtractMediaBlacklistAsync(req.user, req.body)
-    .then(list => res.status(200).json(list))
-    .catch(next)
-})
-
-module.exports = router
 

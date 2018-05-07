@@ -1,14 +1,19 @@
 module.exports = {
-  "rules": {
-    "padded-blocks": ["error", { 
-      "blocks": "never",
-      "classes": "always",
-      "switches": "never"
-    }]
+  "env": {
+    "node": true,
+    "es6": true,
+    "mocha": true
   },
   "extends": "standard",
   "plugins": [
       "standard",
       "promise"
-  ]
+  ],
+  "parserOptions": {
+    "ecmaVersion": 8,
+    "sourceType": "module"
+  },
+  "rules": {
+   
+  }
 };

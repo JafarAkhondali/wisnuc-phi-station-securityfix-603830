@@ -96,7 +96,6 @@ const userEntryMProps = [
   'global'      // { id, wx: [ <unionId> ] }
 ]
 
-
 const assert = (predicate, message) => {
   if (!predicate)
     throw Object.assign(new Error(message), { status: 403 });

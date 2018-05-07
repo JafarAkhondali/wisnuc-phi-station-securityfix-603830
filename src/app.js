@@ -1,111 +1,89 @@
-process.env['UV_THREADPOOL_SIZE'] = 64
-require('./prerequisite')
-
 const path = require('path')
 const fs = require('fs')
-const express = require('express')
-const logger = require('morgan')
-const bodyParser = require('body-parser')
+const child = require('child_process')
+const UUID = require('uuid')
 
-const broadcast = require('./common/broadcast')
-const settings = require('./system/settings')
+const mkdirp = require('mkdirp')
+const getArgs = require('get-args')
 
-const app = express()
+const configurations = require('./configurations')
+const Fruitmix = require('./fruitmix/Fruitmix')
+const App = require('./app/App')
 
-const config = require('./system/config')
-const barcelona = require('./system/barcelona')
-const system = require('./system/system')
-const net = require('./system/net')
-const timedate = require('./system/timedate')
-const boot = require('./system/boot')
-const storage = require('./routes/storage')
-const auth = require('./middleware/auth')
-const token = require('./routes/token')
-const users = require('./routes/users')
-const drives = require('./routes/drives')
-const ndrives = require('./routes/ndrives')
-const boxes = require('./routes/boxes')
-const media = require('./routes/media')
-const tasks = require('./routes/tasks')
-const cloudToken = require('./routes/wxtoken')
-const station = require('./station')
 
 /**
-This module is the entry point of the whole application.
+This is the entry point of the program.
 
-@module App
+CreateApp parses args and create the App accordingly.
+
+--standalone                  start appifi without bootstrap
+  --mdns                      fake mdns broadcasting
+  --fruitmix-only             start fruitmix without boot
+  --fruitmix-dir path/to/dir  use the given path as fruitmix root directory.
+  --alice                     use alice as bound user
+--smb                         use smb
+--dlna                        use dlna
+--transmission                use transmission
+--webtorrent                  use webtorrent
+
+
+@module createApp
 */
-app.set('json spaces', 0)
-app.use(logger('dev', { skip: (req, res) => res.nolog === true || app.nolog === true }))
-app.use(bodyParser.json())
-app.use(bodyParser.urlencoded({ extended: false }))
-app.use(auth.init())
-app.use('/boot', boot)
-app.use('/storage', storage)
-app.use('/control/system', system) 
-app.use('/control/net/interfaces', net)
-app.use('/control/timedate', timedate)
-if (barcelona.romcodes) app.use('/control/fan', barcelona.router)
-app.use('/token', token)
-app.use('/station', station)
-app.use('/cloudToken', cloudToken)
-app.use('/users', users)
-app.use('/drives', drives)
-app.use('/ndrives', ndrives)
-app.use('/boxes', boxes)
-app.use('/media', media)
-app.use('/tasks', tasks)
-app.use('/features', require('./routes/features'))
-app.use('/download', require('./webtorrent'))
 
-let { NODE_ENV, NODE_PATH, LOGE } = process.env
-const isAutoTesting = NODE_ENV === 'test' && NODE_PATH !== undefined
+let isRoot = process.getuid && process.getuid() === 0 
+let args = (getArgs(process.argv)).options
 
-// app.use('/uploads', uploads)
-// catch 404 and forward to error handler
-app.use(function(req, res, next) {
-  var err = new Error('Not Found')
-  err.status = 404
-  next(err)
-})
+const hostname = `wisnuc-generic-deadbeef${UUID.v4().split('-').join('').slice(0, 16)}`
 
-// error handlers
-app.use(function(err, req, res, next) {
-  // if (err && process.env.NODE_ENV === 'test' && !NODE_PATH) console.log(err)
+console.log(args)
 
-  if (err) {
-    // FIXME: logger error 
-    // console.error('error', err)
+// only standalone && fruitmix-only mode allows non-priviledged user
+if (!(args.standalone && args["fruitmix-only"]) && !isRoot) 
+  throw new Error('boot module requires root priviledge')
 
-    if (isAutoTesting && !LOGE) {
-    } else {
-      console.log('::', err)
-    }
-  }
+if (args.smb && !isRoot) throw new Error('smb feature requires root priviledge')
+if (args.dlna && !isRoot) throw new Error('dlna feature requires root priviledge')
+if (args.transmission && !isRoot) throw new Error('transmission feature requires root priviledge')
 
-  res.status(err.status || 500).json({
-    code: err.code,
-    message: err.message,
-    where: err.where
-  })
-})
-
-if (NODE_PATH) app.nolog = true
-
-if (!isAutoTesting) {
-  let server = app.listen(3000, err => {
-    if (err) {
-      console.log('failed to listen on port 3000')
-      process.exit(1)
-    } else {
-      console.log('server started on port 3000')
-    }
-  })
-
-  server.on('error', err => console.log('WARNING: http server error', err))
-  server.on('timeout', () => console.log('WARNING: http server timeout'))
-  server.setTimeout(600 * 1000) // 10 minutes
+if (args.mdns && !isRoot) throw new Error('mdns requires root priviledge')
+else {
+  child.exec(`avahi-set-host-name ${hostname}`)
+  child.spawn('avahi-publish-service', ['fakeBootstrap', '_http._tcp', 3000], { stdio: 'ignore' })
 }
 
-module.exports = app
+let fruitmixOpts = {
+  useSmb: !!args.smb, 
+  useDlna: !!args.dlna,
+  useTransmission: !!args.transmission
+}
 
+let fruitmixDir = path.join(process.cwd(), 'tmptest')
+
+let appOpts
+
+// in standalone mode
+if (args.standalone) {
+  if (args["fruitmix-only"]) {
+    if (args["fruitmix-dir"]) {
+      fruitmixOpts.fruitmixDir = args["fruitmix-dir"]
+    } else {
+      let cwd = process.cwd()
+      let tmptest = path.join(cwd, 'tmptest')
+      mkdirp.sync(tmptest)
+      fruitmixOpts.fruitmixDir = tmptest
+    }
+
+    let fruitmix = new Fruitmix(fruitmixOpts)
+    let app = new App({ fruitmix, useServer: true })
+  } else {
+    let configuration = configurations.phicomm.n2
+    console.log('configuration', configuration)
+
+    let app = new App({
+      fruitmixOpts,
+      configuration,
+      useAlice: true,
+      useServer: true
+    })
+  }
+}
