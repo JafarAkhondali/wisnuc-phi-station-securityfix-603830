@@ -26,7 +26,7 @@ const Directory = require('./vfs/directory')
 
 const { btrfsConcat, btrfsClone, btrfsClone2 } = require('../lib/btrfs')
 
-const { readXstat, readXstatAsync, forceXstatAsync, forceXstat, assertDirXstatSync, assertFileXstatSync } = require('../lib/xstat')
+const { readXstat, forceXstat, assertDirXstatSync, assertFileXstatSync } = require('../lib/xstat')
 
 const Debug = require('debug')
 const smbDebug = Debug('samba')
@@ -175,6 +175,7 @@ class VFS extends EventEmitter {
     try {
       mkdirp.sync(dirPath)
       stats = fs.lstatSync(dirPath)
+      // this is tricky but works
       xattr.setSync(dirPath, 'user.fruitmix', JSON.stringify(attr))
     } catch (e) {
       console.log(e)
@@ -596,6 +597,49 @@ class VFS extends EventEmitter {
   
   */
   DUP (user, props, callback) {
+  }
+
+  /**
+  @param {object} user
+  @param {object} props
+  @param {string} props.driveUUID
+  @param {string} props.dirUUID
+  @param {string} props.name
+  @param {string} props.tags
+  */
+  ADDTAGS (user, props, callback) {
+    this.DIR(user, props, (err, dir) => {
+      if (err) return callback(err)
+
+      return callback(new Error('not implemented'))
+
+      let filePath = path.join(this.absolutePath(dir), props.name)   
+      readXstat(filePath, (err, xstat) => {
+        if (err) return callback(err)
+        if (xstat.type !== 'file') {
+          let err = new Error('not a file')
+          err.code = 'ENOTFILE'
+          return callback(err)
+        }
+
+        let newTags
+        if (xstat.tags) {
+          // newTags =  
+        } else {
+        }
+      })
+    })  
+  }
+
+  REMOVETAGS (user, props, callback) {
+    this.DIR(user, props, (err, dir) => {
+      if (err) return callback(err)
+    })
+  }
+
+  SETTAGS (user, props, callback) {
+    this.DIR(user, props, (err, dir) => {
+    })
   }
 
 
@@ -1131,7 +1175,7 @@ class VFS extends EventEmitter {
     if (props.namepath === 'true' && !props.places) 
       Throw(400, 'places must be provided if namepath is true')
 
-    let dirs, tags, magics 
+    let dirs, tags, magics
     if (props.places) {
       // split into multiple uuids
       let split = props.places.split('.') 
@@ -1175,7 +1219,7 @@ class VFS extends EventEmitter {
 
       if (props.media) {
         if (node.hash && this.mediaMap.hasMetadata(node.hash)) {
-          mediaSet.add(this.mediaMap.getMetadata(node.hash))
+          mediaSet.add(Object.assign({}, this.mediaMap.getMetadata(node.hash), { hash: node.hash }))
         }
       } else {
         let file = {
