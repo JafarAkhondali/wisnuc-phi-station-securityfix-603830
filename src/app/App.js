@@ -5,12 +5,14 @@ const os = require('os')
 const Boot = require('../system/Boot')
 const Auth = require('../middleware/Auth')
 const createTokenRouter = require('../routes/Token')
-const createUserRouter = require('../routes/users')
-const createDriveRouter = require('../routes/drives2')
-const createTimeDateRouter = require('../routes/TimeDate')
+// const createUserRouter = require('../routes/users')
+// const createDriveRouter = require('../routes/drives2')
+// const createTimeDateRouter = require('../routes/TimeDate')
 const createExpress = require('../system/express')
-const createTagRouter = require('../routes/tags')
-const createTaskRouter = require('../routes/tasks2')
+// const createTagRouter = require('../routes/tags')
+// const createTaskRouter = require('../routes/tasks2')
+// const createSambaRouter = require('../routes/samba')
+// const createTransmissionRouter = require('../routes/transmission')
 
 const express = require('express') // TODO
 const { passwordEncrypt } = require('../lib/utils')
@@ -108,7 +110,8 @@ class App extends EventEmitter {
     // create a Pipe
     this.pipe = new Pipe({
       fruitmix: () => this.fruitmix,
-      config: this.cloudConf
+      config: this.cloudConf,
+      boot: this.boot
     })
 
     // create server if required
@@ -119,11 +122,15 @@ class App extends EventEmitter {
           process.exit(1) // TODO
         } else {
           console.log('server started on port 3000')
+          process.send && process.send(JSON.stringify({
+            type: 'appifi_started',
+            data: {}
+          }))
         }
       })
     }
-
-    process.on('message', this.handleMessage.bind(this))
+    if (opts.listenProcess)
+      process.on('message', this.handleMessage.bind(this))
   }
 
   handleMessage (msg) {
@@ -148,7 +155,7 @@ class App extends EventEmitter {
         this.cloudConf.device = message.data
         break
       case 'bootstrap_boundUser':
-        if (this.boot && message.data) this.boot.setBoundUser(message.data)
+        if (this.boot && message.hasOwnProperty('data')) this.boot.setBoundUser(message.data)
         break
       default:
         break
@@ -310,12 +317,16 @@ class App extends EventEmitter {
       }
 
       const anonymous = (req, res, next) =>
-        this.fruitmix.apis[resource][verb](null,
+        req.headers['authorization'] ? next() : this.fruitmix.apis[resource][verb](null,
           Object.assign({}, req.query, req.body, req.params), f(res, next))
 
       const authenticated = (req, res, next) =>
         this.fruitmix.apis[resource][verb](req.user,
           Object.assign({}, req.query, req.body, req.params), f(res, next))
+
+      const needReq = (req, res, next) =>
+        this.fruitmix.apis[resource][verb](req.user,
+          Object.assign({}, req.query, req.body, req.params, { req }), f(res, next))
 
       if (opts && opts.auth === 'allowAnonymous') {
         router[method](rpath, stub, anonymous, auth.jwt(), authenticated)
@@ -333,15 +344,21 @@ class App extends EventEmitter {
               const m = regex.exec(req.headers['content-type'])
               let boundary = m[1] || m[2]
               let length = parseInt(req.headers['content-length'])
-              let props = Object.assign({}, req.params, { boundary, length, formdata: req })
+              let props = Object.assign({}, req.params, req.query, { boundary, length, formdata: req })
               this.fruitmix.apis[resource][verb](req.user, props, f(res, next))
             }
           })
         } else {
-          router[method](rpath, stub, auth.jwt(), authenticated)
+          if (opts && opts.needReq) {
+            router[method](rpath, stub, auth.jwt(), needReq)
+          } else {
+            router[method](rpath, stub, auth.jwt(), authenticated)
+          }
         }
       }
     })
+
+    // console.log(router.stack.map(l => l.route))
 
     return router
   }
