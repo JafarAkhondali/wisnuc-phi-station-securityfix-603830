@@ -500,8 +500,6 @@ describe('xcopy task', () => {
       children: singletons.file
     })
 
-    // let c2 = await user.mktreeAsync({ type: 'nfs', drive: UUIDDE, dir: '', children })
-
     let copyArgs = {
       type: 'copy',
       src: {
@@ -518,33 +516,24 @@ describe('xcopy task', () => {
 
     let task, next
     task = await user.createTaskAsync(copyArgs)
-
     assertTask(copyArgs, task)
 
-    // first
     next = await user.stepTaskAsync(task.uuid)
 
-    // first step, root @ Preparting
     expect(next.step.nodes.length).to.equal(1)
     expect(next.step.nodes[0].state).to.equal('Preparing')
 
-    // first watch, root @ Parent
     expect(next.watch.nodes.length).to.equal(1)
     expect(next.watch.nodes[0].state).to.equal('Parent')
 
-    // second
     next = await user.stepTaskAsync(task.uuid)
 
-    // second step, root @ Parent, foo @ Working
     expect(next.step.nodes.length === 2)
     expect(next.step.nodes.find(n => !n.parent).state).to.equal('Parent')
     expect(next.step.nodes.find(n => n.src.name === 'foo').state).to.equal('Working')
 
-    // second watch, nothing
     expect(next.watch.nodes.length === 0)
     expect(next.watch.finished).to.be.true 
-    
-    // TODO assert file system 
   })
 
 //    let c2 = await user.mktreeAsync({ type: 'nfs', drive: UUIDDE, dir: '', children })
@@ -573,7 +562,6 @@ describe('xcopy task', () => {
 
     let task, next
     task = await user.createTaskAsync(copyArgs)
-
     assertTask(copyArgs, task) 
 
     next = await user.stepTaskAsync(task.uuid)
@@ -704,5 +692,244 @@ describe('xcopy task', () => {
 
   })
 
+  it('move, file, no conflict', async function () {
+    let c1 = await user.mktreeAsync({
+      type: 'vfs',
+      drive: user.home.uuid,
+      dir: user.home.uuid,
+      children: singletons.file
+    })
 
+    let moveArgs = {
+      type: 'move',
+      src: {
+        drive: user.home.uuid,
+        dir: c1[1].xstat.uuid, 
+      },
+      dst: {
+        drive: user.home.uuid,
+        dir: c1[0].xstat.uuid
+      },
+      entries: ['foo'],
+      stepping: true
+    }
+
+    let task, next
+    task = await user.createTaskAsync(moveArgs)
+
+    assertTask(moveArgs, task)
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    // only file, no mvdirs
+    expect(next.step.nodes.length).to.equal(1)
+    expect(next.step.nodes[0].state).to.equal('Preparing') 
+    expect(next.watch.nodes.length).to.equal(1)
+    expect(next.watch.nodes[0].state).to.equal('Parent')
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    expect(next.step.nodes.length).to.equal(2)
+    expect(next.step.nodes[0].state).to.equal('Working') // moving
+
+    expect(next.watch.nodes.length).to.equal(0) // finish
+  })
+
+  it('move, dir, no conflict, a1ad01e3', async function () {
+    let c1 = await user.mktreeAsync({
+      type: 'vfs',
+      drive: user.home.uuid,
+      dir: user.home.uuid,
+      children: singletons.dir
+    })
+
+    let moveArgs = {
+      type: 'move',
+      src: {
+        drive: user.home.uuid,
+        dir: c1[1].xstat.uuid, 
+      },
+      dst: {
+        drive: user.home.uuid,
+        dir: c1[0].xstat.uuid
+      },
+      entries: ['foo'],
+      stepping: true
+    }
+
+    let task, next
+    task = await user.createTaskAsync(moveArgs)
+
+    assertTask(moveArgs, task)
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    // root preparing
+    expect(next.step.nodes.length).to.equal(1)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+
+    // root parent
+    expect(next.watch.nodes.length).to.equal(1)
+    expect(next.watch.nodes[0].state).to.equal('Parent')
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    // foo preparing
+    expect(next.step.nodes.length).to.equal(2)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+
+    // foo finished and root finished
+    expect(next.watch.nodes.length).to.equal(0)
+  })
+
+  it('import, file, no conflict, 2fddf273', async function () {
+    let c1 = await user.mktreeAsync({
+      type: 'vfs',
+      drive: user.home.uuid,
+      dir: user.home.uuid,
+      children: singletons.file
+    })
+
+    let c2 = await user.mktreeAsync({
+      type: 'nfs',
+      drive: UUIDDE,
+      dir: '',
+      children: singletons.file
+    })
+
+    let importArgs = {
+      type: 'import',
+      src: {
+        drive: UUIDDE,
+        dir: 'src'
+      },
+      dst: {
+        drive: user.home.uuid,
+        dir: c1[0].xstat.uuid,
+        name: c1[0].xstat.name,
+      },
+      entries: ['foo'],
+      stepping: true
+    } 
+
+    let task, next
+    task = await user.createTaskAsync(importArgs)
+    assertTask(importArgs, task)
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    expect(next.step.nodes.length).to.equal(1)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+
+    expect(next.watch.nodes.length).to.equal(1)
+    expect(next.watch.nodes[0].state).to.equal('Parent')
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    expect(next.step.nodes.length === 2)
+    expect(next.step.nodes.find(n => !n.parent).state).to.equal('Parent')
+    expect(next.step.nodes.find(n => n.src.name === 'foo').state).to.equal('Working')
+
+    expect(next.watch.nodes.length === 0)
+    expect(next.watch.finished).to.be.true 
+  }) 
+
+  it('import, dir, no conflict, 9de7aeff', async function () {
+    let c1 = await user.mktreeAsync({
+      type: 'vfs',
+      drive: user.home.uuid,
+      dir: user.home.uuid,
+      children: singletons.dir
+    })
+
+    let c2 = await user.mktreeAsync({
+      type: 'nfs',
+      drive: UUIDDE,
+      dir: '',
+      children: singletons.dir
+    })
+
+    let importArgs = {
+      type: 'import',
+      src: {
+        drive: UUIDDE,
+        dir: 'src'
+      },
+      dst: {
+        drive: user.home.uuid,
+        dir: c1[0].xstat.uuid
+      },
+      entries: ['foo'],
+      stepping: true
+    } 
+
+    let task, next
+    task = await user.createTaskAsync(importArgs)
+    assertTask(importArgs, task)
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    // first step root @ Preparing
+    expect(next.step.nodes.length).to.equal(1)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+    
+    expect(next.watch.nodes.length).to.equal(1)
+    expect(next.watch.nodes[0].state).to.equal('Parent')
+
+    next = await user.stepTaskAsync(task.uuid) 
+
+    expect(next.step.nodes.length).to.equal(2)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+    expect(next.step.nodes[1].state).to.equal('Parent')
+
+    expect(next.watch.nodes).to.deep.equal([])
+    expect(next.watch.finished).to.be.true
+  })
+
+  it('export, file, no conflict', async function () {
+    let c1 = await user.mktreeAsync({
+      type: 'vfs',
+      drive: user.home.uuid,
+      dir: user.home.uuid,
+      children: singletons.file
+    })
+
+    let c2 = await user.mktreeAsync({
+      type: 'nfs',
+      drive: UUIDDE,
+      dir: '',
+      children: singletons.file
+    })
+
+    let exportArgs = {
+      type: 'export',
+      src: {
+        drive: user.home.uuid,
+        dir: c1[1].xstat.uuid,
+        name: c1[1].xstat.name
+      },
+      dst: {
+        drive: UUIDDE,
+        dir: 'dst'
+      },
+      entries: ['foo'],
+      stepping: true
+    } 
+
+    let task, next
+    task = await user.createTaskAsync(exportArgs)
+    assertTask(exportArgs, task)
+
+    next = await user.stepTaskAsync(task.uuid)
+
+    expect(next.step.nodes.length).to.equal(1)
+    expect(next.step.nodes[0].state).to.equal('Preparing')
+
+    expect(next.watch.nodes.length).to.equal(1)
+    expect(next.watch.nodes[0].state).to.equal('Parent')
+
+    next = await user.stepTaskAsync(task.uuid)
+    
+   //  console.log(JSON.stringify(next, null, '  '))
+  })
 })

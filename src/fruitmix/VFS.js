@@ -18,7 +18,7 @@ const log = require('winston')
 const xattr = require('fs-xattr')       // TODO remove
 const { saveObjectAsync } = require('../lib/utils')
 const autoname = require('../lib/autoname')
-const { isSHA256 } = require('../lib/assertion')
+const { isUUID, isSHA256 } = require('../lib/assertion')
 
 const Node = require('./vfs/node')
 const File = require('./vfs/file')
@@ -226,6 +226,11 @@ class VFS extends EventEmitter {
   }
 
   userCanWriteDir (user, dir) {
+
+    if (user === undefined || dir === undefined) {
+      console.log(new Error())
+    }
+
     let drive = this.drives.find(drv => drv.uuid === dir.root().uuid)
     return drive && userCanWriteDrive(user, drive)
   }
@@ -511,10 +516,12 @@ class VFS extends EventEmitter {
 
   @param {object} user
   @param {object} props
-  @param {object} props.name - file name
-  @param {object} props.data - tmp data file
-  @param {object} props.size - file size (not used)
-  @param {object} props.sha256 - file hash
+  @param {string} props.driveUUID - drive uuid
+  @param {string} props.dirUUID - dir uuid
+  @param {string} props.name - file name
+  @param {string} props.data - tmp data file
+  @param {number} props.size - file size (not used)
+  @param {string} props.sha256 - file hash (fingerprint)
   */
   NEWFILE (user, props, callback) {
     let { name, data, size, sha256 } = props
@@ -646,7 +653,7 @@ class VFS extends EventEmitter {
       err.status = 400
       process.nextTick(() => callback(err))
     }
-
+    // console.log(user, props, '=================================')
     this.DIR(user, props, (err, dir) => {
       if (err) return callback(err)
 
@@ -690,7 +697,6 @@ class VFS extends EventEmitter {
 
     // normalize
     let tags = Array.from(new Set(props.tags)).sort()
-
     this.DIR(user, props, (err, dir) => {
       if (err) return callback(err)
 
@@ -707,6 +713,7 @@ class VFS extends EventEmitter {
         
         // complementary set
         let newTags = xstat.tags.reduce((acc, id) => tags.includes(id) ? acc : [...acc, id], [])
+        console.log(newTags)
         updateFileTags(filePath, xstat.uuid, newTags, callback)
       }) 
     })
@@ -766,7 +773,7 @@ class VFS extends EventEmitter {
 
       let filePath = path.join(this.absolutePath(dir), name)
       fs.lstat(filePath, (err, stat) => {
-        if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) err.code = 404
+        if (err && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) err.status = 404
         callback(err, filePath)
       })
     })
@@ -1143,7 +1150,6 @@ class VFS extends EventEmitter {
     })
   }
 
-
   // copy src dir (name) into dst dir
   cpdir (src, dst, policy, callback) {
     let dir, dstDir
@@ -1298,6 +1304,31 @@ class VFS extends EventEmitter {
     })
   }
 
+  /**
+  @param {object} user
+  @param {object} props
+  @param {
+  */ 
+  MVDIRS (user, props, callback) {
+    let { src, dst, names, policy } = props
+    this.DIR(user, { driveUUID: src.drive, dirUUID: src.dir }, (err, srcDir) => {
+      if (err) return callback(err)
+      this.DIR(user, { driveUUID: dst.drive, dirUUID: dst.dir }, (err, dstDir) => {
+        if (err) return callback(err)
+        let count = names.length 
+        let map = new Map()
+        names.forEach(name => {
+          let oldPath = path.join(this.absolutePath(srcDir), name)
+          let newPath = path.join(this.absolutePath(dstDir), name)
+          mvdir(oldPath, newPath, policy, (err, stat, resolved) => {
+            map.set(name, { err, stat, resolved })
+            if (!--count) srcDir.read(() => dstDir.read(() => callback(null, map)))
+          })
+        })
+      })
+    })
+  }
+
   // move src file into dst dir
   // mvfilec(srcDriveUUID, srcDirUUID, srcFileUUID, srcFileName, dstDriveUUID, dstDirUUID, policy, callback) {
   mvfile (src, dst, policy, callback) {
@@ -1315,6 +1346,28 @@ class VFS extends EventEmitter {
     mvfile(oldPath, newPath, policy, (err, xstat, resolved) => {
       // TODO
       callback(err, xstat, resolved)
+    })
+  }
+
+
+  /**
+  @param {object} user
+  @param {object} props
+  @param {object} props.src
+  @param {object} 
+  */
+  MVFILE (user, props, callback) {
+    let { src, dst, policy } = props
+    this.DIR(user, { driveUUID: src.drive, dirUUID: src.dir }, (err, srcDir) => {
+      if (err) return callback(err)
+      this.DIR(user, { driveUUID: dst.drive, dirUUID: dst.dir }, (err, dstDir) => {
+        if (err) return callback(err)
+        let oldPath = path.join(this.absolutePath(srcDir), src.name)
+        let newPath = path.join(this.absolutePath(dstDir), src.name)
+
+        // TODO to do what ???
+        mvfile(oldPath, newPath, policy, callback)
+      })
     })
   }
 
@@ -1363,7 +1416,9 @@ class VFS extends EventEmitter {
   @param {boolean} props.media - if true, returns metadata instead of file 
   */
   visitFilesSync(user, props) {
-    const Throw = (status, message) => { throw Object.assign(new Error(message), { status }) }
+    const Throw = (status, message) => { 
+      throw Object.assign(new Error(message), { status }) 
+    }
 
     if (props.namepath === 'true' && !props.places) 
       Throw(400, 'places must be provided if namepath is true')
@@ -1376,7 +1431,8 @@ class VFS extends EventEmitter {
      
       dirs = split.map(uuid => this.forest.uuidMap.get(uuid))
       if (!dirs.every(dir => !!dir)) Throw(403, 'some places not found')
-      if (!dirs.every(dir => this.userCanWriteDir())) Throw(403, 'some places not accessible')
+      // FIXME
+      // if (!dirs.every(dir => this.userCanWriteDir())) Throw(403, 'some places not accessible')
     } else {
       dirs = this.drives
         .filter(drv => this.userCanWriteDrive(user, drv))
@@ -1393,7 +1449,9 @@ class VFS extends EventEmitter {
 
     if (props.magics) {
       // split, dedup, sort, and uppercase
-      magics = Array.from(new Set(props.magics.split('.').filter(x => !!x))).sort().toUpperCase()
+      let set = new Set(props.magics.split('.').filter(x => !!x))
+      magics = Array.from(set).sort().map(x => x.toUpperCase())
+
     }
    
     let files = [] 
