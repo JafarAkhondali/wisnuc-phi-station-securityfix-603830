@@ -1,13 +1,10 @@
-const path = require('path')
 const fs = require('fs')
 
 const rimraf = require('rimraf')
 const debug = require('debug')('xfile')
 
-const Node = require('./node')
-const openwx = require('./lib').openwx
+const XNode = require('./xnode')
 const FingerStream = require('../../lib/finger-stream')
-
 
 /**
 Base state class for file
@@ -103,17 +100,15 @@ class Working extends State {
             this.setState(Finish)
           }
         })
-
       } break
 
       case 'import': {
-
         // TODO 1. refactor hash to child process
         // TODO 2. remove tmp file ???
 
         let props = {
           id: this.ctx.ctx.src.drive,
-          path: this.ctx.namepath(),
+          path: this.ctx.namepath()
         }
 
         this.ctx.ctx.nfs.GET(this.ctx.ctx.user, props, (err, srcPath) => {
@@ -139,10 +134,10 @@ class Working extends State {
                 driveUUID: this.ctx.ctx.dst.drive,
                 dirUUID: this.ctx.parent.dst.uuid,
                 name: this.ctx.src.name,
-                data: dstPath, 
+                data: dstPath,
                 size: this.ws.bytesWritten,
                 sha256: this.fs.fingerprint,
-                policy,
+                policy
               }
 
               this.ctx.ctx.vfs.NEWFILE(user, props, (err, stat, resolved) => {
@@ -173,44 +168,35 @@ class Working extends State {
       } break
 
       case 'export': {
-        let src = {
-          dir: this.ctx.parent.src.uuid,
+        let user = this.ctx.ctx.user
+        let props = {
+          driveUUID: this.ctx.ctx.src.drive,
+          dirUUID: this.ctx.parent.src.uuid,
           uuid: this.ctx.src.uuid,
           name: this.ctx.src.name
         }
 
-        this.ctx.ctx.clone(src, (err, tmpPath) => {
+        this.ctx.ctx.vfs.CLONE(user, props, (err, data) => {
           if (err) {
-            this.setState('Failed', err)
+            this.setState(Failed(err))
           } else {
-            let dstFilePath = path.join(this.ctx.parent.dst.path, this.ctx.src.name)
             let policy = this.ctx.getPolicy()
+            let props = {
+              id: this.ctx.ctx.dst.drive,
+              path: this.ctx.parent.dstNamePath(), // dir path
+              name: this.ctx.src.name,
+              data,
+              policy
+            }
 
-            openwx(dstFilePath, policy, (err, fd, resolved) => {
+            this.ctx.ctx.nfs.NEWFILE(user, props, (err, _, resolved) => {
+              rimraf(data, () => {})
               if (err && err.code === 'EEXIST') {
-                rimraf(tmpPath, () => {})
                 this.setState(Conflict, err, policy)
               } else if (err) {
-                rimraf(tmpPath, () => {})
                 this.setState(Failed, err)
               } else {
-                if (fd) {
-                  this.rs = fs.createReadStream(tmpPath)
-                  this.fs = new FingerStream()
-                  this.ws = fs.createWriteStream(null, { fd })
-                  this.rs.pipe(this.fs)
-                  this.rs.pipe(this.ws)
-
-                  this.ws.on('finish', () => {
-                    rimraf(tmpPath, () => {})
-
-                    console.log(this.fs.fingerprint)
-
-                    this.setState(Finish)
-                  })
-                } else {
-                  this.setState(Finish)
-                }
+                this.setState(Finish)
               }
             })
           }
@@ -218,7 +204,7 @@ class Working extends State {
       } break
 
       default:
-        throw new Error('invalid mode') // TODO
+        throw new Error('invalid task type') // TODO
     }
   }
 }
@@ -233,7 +219,7 @@ class Conflict extends State {
     return {
       error: {
         code: this.err.code,
-        xcode: this.err.xcode,
+        xcode: this.err.xcode
       },
       policy: this.policy
     }
@@ -253,12 +239,9 @@ class Failed extends State {
 class Finish extends State { }
 
 /**
-The base class of a file subtask
-
-@memberof XCopy
+The base class of a file subtask in xcopy
 */
-class XFile extends Node {
-
+class XFile extends XNode {
   /**
   @param {object} ctx - task context
   @param {object} parent - parent node, must be an XDir

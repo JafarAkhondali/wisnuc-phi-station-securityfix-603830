@@ -5,7 +5,7 @@ The abstract base class for different type of sub-tasks
 
 @memberof XCopy
 */
-class Node extends EventEmitter {
+class XNode extends EventEmitter {
 
   /**
   Create a node
@@ -139,6 +139,12 @@ class Node extends EventEmitter {
     return arr.join('/')
   }
 
+  dstNamePath () {
+    let arr = []
+    for (let n = this; n; n = n.parent) arr.unshift(n.dst.name)
+    return arr.join('/')
+  }
+
   /**
   Update this node's policy and retry
   */
@@ -176,4 +182,4 @@ class Node extends EventEmitter {
   }
 }
 
-module.exports = Node
+module.exports = XNode
