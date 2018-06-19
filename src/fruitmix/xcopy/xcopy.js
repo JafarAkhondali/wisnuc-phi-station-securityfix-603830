@@ -45,6 +45,10 @@ class XCopy extends EventEmitter {
     // stepping mode specific
     this.steppingState = 'Stopped' // or 'Stepping'
 
+    // backward compatible for a few weeks TODO
+    if (type === 'import') type === 'icopy'
+    if (type === 'export') type === 'ecopy'
+
     this.type = type
     this.user = user
     this.uuid = UUID.v4()
@@ -69,11 +73,14 @@ class XCopy extends EventEmitter {
     if (this.type === 'copy' || this.type === 'move') {
       src = { uuid: this.src.dir, name: '' }
       dst = { uuid: this.dst.dir, name: '' } 
-    } else if (this.type === 'import') {
+    } else if (this.type === 'icopy' || this.type === 'imove') {
       src = { uuid: UUID.v4(), name: this.src.dir }
       dst = { uuid: this.dst.dir, name: '' }
-    } else if (this.type === 'export') {
+    } else if (this.type === 'ecopy' || this.type === 'emove') {
       src = { uuid: this.src.dir, name: '' }
+      dst = { name: this.dst.dir }
+    } else if (this.type === 'ncopy' || this.type === 'nmove') {
+      src = { uuid: UUID.v4(), name: this.src.dir }
       dst = { name: this.dst.dir }
     } else {
       throw new Error('unexpected type')
@@ -306,7 +313,7 @@ class XCopy extends EventEmitter {
     return v
   }
 
-  // this method is used by copy, move and export, but not import
+  // this method is used by copy, move and ecopy, but not icopy
   readdir(srcDirUUID, callback) {
     if (this.user) {
       this.ctx.readdir(this.user, this.srcDriveUUID, srcDirUUID, callback)
@@ -322,6 +329,7 @@ class XCopy extends EventEmitter {
       return process.nextTick(() => callback(err))
     }
 
+    let { policy } = props
     let node
     this.root.visit(n => {
       if (n.src.uuid === nodeUUID) {
@@ -330,15 +338,34 @@ class XCopy extends EventEmitter {
       }
     })
 
+    // 节点不存在
     if (!node) {
       let err = new Error('node not found')
       err.status = 404
       return process.nextTick(() => callback(err))
     }
 
+    // 节点不处于冲突状态
     if (node.state.constructor.name !== 'Conflict') {
       let err = new Error('invalid operation')
       err.status = 403
+      return process.nextTick(() => callback(err))
+    }
+
+    // policy 不为数组
+    if (!policy || !Array.isArray(policy)) {
+      let err = new Error('policy should be array')
+      err.status = 400
+      return process.nextTick(() => callback(err))
+    }
+
+    // 
+    if (Array.isArray(policy) 
+      && (policy[1] === 'keep' 
+        || (node.constructor.name == 'XFile' && policy[0] === 'keep')
+      ) ) {
+      let err = new Error('file or diff policy can not be keep')
+      err.status = 400
       return process.nextTick(() => callback(err))
     }
 
@@ -350,21 +377,25 @@ class XCopy extends EventEmitter {
     node.updatePolicy(props.policy)
 
     if (props.applyToAll === true) {
+      console.log(`更新Policies之前 全局文件策略 ${this.policies.file}`)
+      console.log(`更新Policies之前 全局夹策略 ${this.policies.dir}`)
       let { dir, file } = this.policies
 
       if (node.constructor.name === 'XFile') {
         let old = [...file]
         if (policy[0]) file[0] = policy[0]
         if (policy[1]) file[1] = policy[1]
-        if (file[0] !== old[0] || file[1] !== old[1]) 
+        if (file[0] !== old[0] || file[1] !== old[1])
+        console.log(`更新Policies之后 全局文件策略 ${this.policies.file}`)
           this.root.visit(n => {
             if (n.src.uuid !== nodeUUID) n.policyUpdated(file)
           })
       } else {
-        let oldPolicy = [...dir]
+        let old = [...dir]
         if (policy[0]) dir[0] = policy[0]
         if (policy[1]) dir[1] = policy[1]
-        if (dir[0] !== old[0] || dir[1] !== old[1]) 
+        if (dir[0] !== old[0] || dir[1] !== old[1])
+        console.log(`更新Policies之后 全局文件夹策略 ${this.policies.dir}`)
           this.root.visit(n => {
             if (n.src.uuid !== nodeUUID) n.policyUpdated(dir)
           })
