@@ -207,7 +207,7 @@ class Starting extends State {
       fruitmixDir,
       boundVolume: this.ctx.volumeStore.data,
       boundUser: this.ctx.boundUser,
-      boot: this.ctx
+      ejectHandler: this.ctx.ejectUSBAsync.bind(this.ctx)
     })
     let fruitmix = new Fruitmix(opts)
 
@@ -437,6 +437,7 @@ class Started extends State {
           else cb(null)
           setTimeout(() => {
             this.uninstalling = false
+            if (props.reset) return child.exec('reboot', () => {})
             process.exit(61)
           }, 200)
         })
@@ -998,10 +999,48 @@ class Boot extends EventEmitter {
    * @param {*} callback 
    */
   uninstall (user, props,callback) {
+    // FIXME:
     // if (!user || !user.phicommUserId || user.phicommUserId !== this.boundUser.phicommUserId) {
     //   return process.nextTick(() => callback(Object.assign(new Error('Permission Denied'), { status: 403 })))
     // }
-    this.state.uninstall(props, callback)
+    
+    if (props.reset && typeof props.reset !== 'boolean') {
+      return callback(Object.assign(new Error('props error'), { status: 400 }))
+    }
+    // if reset , do reset first, auto reboot false
+    if (props.reset) {
+      this.resetToFactory(user, !!props.format, err => {
+        if (err) {
+          console.log('===========================')
+          console.log('factory reset error')
+          console.log('not error if not n2 device')
+          console.log('===========================')
+          console.log(err)
+        }
+        if (props.format) {
+          this.state.uninstall(props, callback)
+        }
+      })
+    } else
+      this.state.uninstall(props, callback)
+  }
+
+  resetToFactory(user, autoReboot, callback) {
+    let fileP = '/mnt/reserved/fw_ver_release.json'
+    fs.readFile(fileP, (err, data) => {
+      if (err) return callback(err)
+      let config = JSON.parse(data.toString())
+      config.action = '1'
+      let tmpP = path.join(ctx.opts.configuration.chassis.dTmpDir, uuid.v4())
+      fs.writeFile(tmpP, JSON.stringify(config, null, '  '), err => {
+        if (err) return callback(err)
+        fs.rename(tmpP, fileP, err => {
+          if (err) return callback(err)
+          if (autoReboot) setTimeout(() => child.exec('reboot'), 1000)
+          callback(null)
+        })
+      })
+    })
   }
 
   async ejectUSBAsync (target) {
@@ -1012,7 +1051,7 @@ class Boot extends EventEmitter {
     if (block.isPartitioned) { // parent block
       let subBlocks = this.storage.blocks.filter(b => b.parentName === target)
       if (!subBlocks.length) throw new Error('block is partitioned, but subBlock not found')
-      let mountedSB = subBlock.filter(s => s.isMounted)
+      let mountedSB = subBlocks.filter(s => s.isMounted)
       for (let i = 0; i < mountedSB.length; i++) {
         await child.execAsync(`udisksctl unmount -b ${ mountedSB[i].devname }`)
       }
@@ -1021,7 +1060,7 @@ class Boot extends EventEmitter {
     } else if (block.isPartition) {//sub block
       if (!isNonEmptyString(block.parentName)) throw new Error('block is partition, but parentName not found')
       let subBlocks = this.storage.blocks.filter(b => b.parentName === block.parentName)
-      let mountedSB = subBlock.filter(s => s.isMounted)
+      let mountedSB = subBlocks.filter(s => s.isMounted)
       for (let i = 0; i < mountedSB.length; i++) {
         await child.execAsync(`udisksctl unmount -b ${ mountedSB[i].devname }`)
       }

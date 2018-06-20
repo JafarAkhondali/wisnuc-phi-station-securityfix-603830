@@ -100,7 +100,7 @@ class XCopy extends EventEmitter {
   }
 
   destroy () {
-    this.root.destroy()
+    if (this.root) this.root.destroy()
   }
 
   // not implemented TODO
@@ -172,7 +172,16 @@ class XCopy extends EventEmitter {
   
   */
   sched () {
-    if (!this.root) return
+    debug('sched')
+
+    if (!this.root) {
+      if (this.watchCallback) {
+        this.watchCallback(null, this.view())
+        this.watchCallback = null
+      }
+      return
+    }
+
     this.scheduled = false
 
     let { runningFile, conflictFile, runningDir, conflictDir } = this.count() 
@@ -194,6 +203,14 @@ class XCopy extends EventEmitter {
     } catch (e) {
       console.log(e)
     }
+
+    if (this.watchCallback) {
+      let { runningFile, runningDir } = this.count()
+      if (runningFile === 0 && runningDir === 0) {
+        this.watchCallback(null, this.view())
+        this.watchCallback = null
+      }
+    }
   }
 
   // this function is called internally from sub tasks
@@ -201,6 +218,8 @@ class XCopy extends EventEmitter {
   // any watch callback should be returned if transition occurred
   // in non-stepping mode, this function schedule sched
   reqSched () {
+    debug('req sched')
+
     if (this.stepping) {
       if (this.scheduled) {
         // debug('reqSched already triggered')
@@ -257,7 +276,8 @@ class XCopy extends EventEmitter {
   // if stopped, return task view
   // otherwise, return task view until stopped (step end)
   watch (callback) {
-    if (!this.stepping) return process.nextTick(() => callback(null))
+    debug('watch')
+    // if (!this.stepping) return process.nextTick(() => callback(null))
     if (this.watchCallback) return process.nextTick(() => callback(null))
 
     let { runningFile, runningDir } = this.count() 

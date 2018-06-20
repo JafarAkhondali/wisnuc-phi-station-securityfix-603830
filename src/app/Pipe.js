@@ -8,9 +8,11 @@ const debug = require('debug')('pipe')
 
 const routing = require('./routing')
 
-const COMMAND_URL = `/ResourceManager/nas/callback/command`
-const RESOURCE_URL = `/ResourceManager/nas/callback/resource`
+const BASE_URL = process.argv.includes('--devCloud')
+  ? 'http://sohon2dev.phicomm.com/ResourceManager/nas/callback/'
+  : 'http://sohon2test.phicomm.com/ResourceManager/nas/callback/'
 const RE_BOUNDARY = /^multipart\/.+?(?:; boundary=(?:(?:"(.+)")|(?:([^\s]+))))$/i
+debug('base url', BASE_URL)
 
 const routes = []
 // routing map
@@ -311,7 +313,7 @@ class Pipe extends EventEmitter {
     const req = () => {
       if (++count > 2) return
       return request({
-        uri: 'http://sohon2test.phicomm.com' + COMMAND_URL, // this.message.packageParams.waitingServer + COMMAND_URL,
+        uri: `${BASE_URL}${message.packageParams.waitingServer}/command`,
         method: 'POST',
         headers: { Authorization: this.ctx.config.cloudToken },
         body: true,
@@ -345,7 +347,7 @@ class Pipe extends EventEmitter {
       file: fs.createReadStream(absolutePath)
     }
     request.post({
-      url: 'http://sohon2test.phicomm.com' + RESOURCE_URL,
+      url: `${BASE_URL}${message.packageParams.waitingServer}/resource`,
       headers: { Authorization: this.ctx.config.cloudToken },
       qs: {
         deviceSN: this.ctx.config.device.deviceSN,
@@ -364,7 +366,7 @@ class Pipe extends EventEmitter {
    */
   getResource (message) {
     return request({
-      uri: 'http://sohon2test.phicomm.com' + RESOURCE_URL,
+      uri: `${BASE_URL}${message.packageParams.waitingServer}/resource`,
       method: 'GET',
       headers: { Authorization: this.ctx.config.cloudToken },
       qs: {
