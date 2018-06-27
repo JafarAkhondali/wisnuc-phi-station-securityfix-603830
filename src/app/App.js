@@ -98,16 +98,15 @@ class App extends EventEmitter {
       try {
         let slots
         if (fs.existsSync(SlotConfPath)) {
-          slots = JSON.parse(fs.readFileSync(SlotConfPath).toString())
+          slots = JSON.parse(fs.readFileSync(SlotConfPath).toString().trim())
         }
         if (Array.isArray(slots)) {
           configuration.slots = slots
         }
+        console.log('update slots: ', configuration.slots)
       } catch(e) {}
 
       this.device = new Device(this)
-
-      fruitmixOpts.chassisId = this.device.view().sn
 
       this.boot = new Boot({ configuration, fruitmixOpts })
 
@@ -180,7 +179,7 @@ class App extends EventEmitter {
       case 'bootstrap_unbind':
         if (this.boot) {
           return this.boot.volumeStore.save(null, (err, data) => {
-            process.exit(61)
+            setTimeout(() => process.exit(61), 100)
           })
         }
         break

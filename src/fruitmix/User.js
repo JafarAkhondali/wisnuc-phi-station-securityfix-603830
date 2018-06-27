@@ -38,9 +38,9 @@ class User extends EventEmitter {
       isArray: true
     })
 
-    // observe chassis change
-    if (opts.chassisId) {
-      this.chassisId = opts.chassisId
+    // observe boundVolume change
+    if (opts.boundVolumeId) {
+      this.chassisId = opts.boundVolumeId
       this.chassisStore = new DataStore({
         file: opts.chassisFile,
         tmpDir: opts.chassisTmpDir,
@@ -76,12 +76,20 @@ class User extends EventEmitter {
       this.store.save(users => {
         users.filter(u => u.status === USER_STATUS.ACTIVE)
           .forEach(u => {
-            if (!u.isFirstUser) u.status = USER_STATUS.INACTIVE
-            u.password = undefined
-            u.smbPassword = undefined
+            if (!u.isFirstUser) {
+              u.status = USER_STATUS.INACTIVE
+              u.password = undefined
+              u.smbPassword = undefined
+            }
           })
+        console.log('chassisId change:', users)
         return users
-      }, () => {})
+      }, err => {
+        if (err) return console.log('update users to INACTIVE status error', err)
+        return this.chassisStore.save(data => {
+          return [this.chassisId, ...data]
+        }, () => {})
+      })
     }
   }
 
@@ -106,6 +114,19 @@ class User extends EventEmitter {
     return this.users.find(u => u.uuid === userUUID)
   }
 
+  storeSave(data, callback) {
+    this.store.save(users => {
+      let changeData = typeof data === 'function' ? data(users) : data
+      // check rules
+      if (changeData) {
+        if (changeData.filter(u => u.status === USER_STATUS.ACTIVE).length > 10) {
+          throw Object.assign(new Error('active users max 10'), { status: 400 })
+        }
+      }
+      return changeData
+    }, callback)
+  }
+
   /**
 
   TODO lastChangeTime is required by smb
@@ -113,7 +134,7 @@ class User extends EventEmitter {
   */
   createUser (props, callback) {
     let uuid = UUID.v4()
-    this.store.save(users => {
+    this.storeSave(users => {
       let isFirstUser = users.length === 0
       let { username, phicommUserId, password, smbPassword, phoneNumber } = props
 
@@ -145,7 +166,7 @@ class User extends EventEmitter {
 
   updateUser (userUUID, props, callback) {
     let { username, status, phoneNumber, smbPassword } = props
-    this.store.save(users => {
+    this.storeSave(users => {
       let index = users.findIndex(u => u.uuid === userUUID)
       if (index === -1) throw new Error('user not found')
       let nextUser = Object.assign({}, users[index])
@@ -198,7 +219,7 @@ class User extends EventEmitter {
       .end((err, res) => {
         if (err) return callback(err)
         console.log('update', res.body)
-        this.store.save(users => {
+        this.storeSave(users => {
           let index = users.findIndex(u => u.uuid === userUUID)
           if (index === -1) throw new Error('user not found')
           let nextUser = Object.assign({}, users[index])
@@ -212,7 +233,7 @@ class User extends EventEmitter {
   }
 
   bindFirstUser (boundUser) {
-    this.store.save(users => {
+    this.storeSave(users => {
       let index = users.findIndex(u => u.isFirstUser)
       if (index === -1) {
         return [{
