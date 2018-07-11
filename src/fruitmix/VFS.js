@@ -248,7 +248,8 @@ class VFS extends EventEmitter {
     if (dir) {
       dir.read(callback)
     } else {
-      process.nextTick(() => callback(new Error('dir not found')))
+      let err = new Error('dir not found')
+      process.nextTick(() => callback(new Error(err)))
     }
   }
 
@@ -404,6 +405,9 @@ class VFS extends EventEmitter {
       if (!props.policy) props.policy = [null, null]
  
       let target = path.join(this.absolutePath(dir), props.name)
+      /**
+      FIXME: This function is problematic. readXattr may race!
+      */
       mkdir(target, props.policy, (err, xstat, resolved) => {
         if (err) return callback(err)
 
@@ -1219,6 +1223,7 @@ class VFS extends EventEmitter {
   @param {Policy} props.policy
   */
   CPFILE (user, props, callback) {
+    debug('CPFILE', props)
     let { src, dst, policy } = props
     this.DIR(user, { driveUUID: src.drive, dirUUID: src.dir }, (err, srcDir) => {
       if (err) return callback(err)
@@ -1237,6 +1242,8 @@ class VFS extends EventEmitter {
             if (!xstat || (policy[0] === 'skip' && xstat && resolved[0])) {
               callback(null)
             } else {
+/**
+  why this code here ???
               try {
                 let attr = JSON.parse(xattr.getSync(srcFilePath, 'user.fruitmix'))
                 attr.uuid = xstat.uuid
@@ -1244,7 +1251,8 @@ class VFS extends EventEmitter {
               } catch (e) {
                 if (e.code !== 'ENODATA') return callback(e)
               }
-              callback(null)
+*/
+              callback(null, xstat, resolved)
             }
           })
         })

@@ -98,7 +98,7 @@ class User {
       }
       return children
     } else if (type === 'nfs') {
-      let children = await this.listNfsAsync(drive, dir)
+      let children = await this.listNfsDirAsync(drive, dir)
       for (let i = 0; i < children.length; i++) {
         if (children[i].type === 'directory') {
           children[i].children = await this.treeAsync({ type, drive, dir: path.join(dir, children[i].name) })
@@ -339,11 +339,31 @@ class Watson {
         await this.visitNode(cs[i], dir, async ({ type, name, file, size, sha256 }, dir) =>
           type === 'directory'
             ? new Promise((resolve, reject) =>
-              this.mkdir(token, drive, dir, name, (err, xstat) =>
-                err ? reject(err) : resolve(xstat)))
+              this.mkdir(token, drive, dir, name, (err, xstat) => {
+                if (err) {
+                  console.log('============ mkdir error', err)
+                  console.log('drive', drive)
+                  console.log('dir', dir)
+                  console.log('name', name)
+                  console.log('============')
+                  reject(err)
+                } else {
+                  resolve(xstat)
+                }
+              }))
             : new Promise((resolve, reject) =>
-              this.newfile(token, drive, dir, name, file, size, sha256, (err, xstat) =>
-                err ? reject(err) : resolve(xstat))))
+              this.newfile(token, drive, dir, name, file, size, sha256, (err, xstat) => {
+                if (err) {
+                  console.log('~~~~~~~~~~~~ newfile error', err) 
+                  console.log('drive', drive)
+                  console.log('dir', dir)
+                  console.log('name', name)
+                  console.log('~~~~~~~~~~~~')
+                  reject(err)
+                } else {
+                  resolve(xstat)
+                }
+              })))
       }
     } else {
       for (let i = 0; i < cs.length; i++) {

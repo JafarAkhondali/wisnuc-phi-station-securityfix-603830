@@ -81,24 +81,32 @@ const mkdir = (target, policy, callback) => {
         const diff = !same
 
         if ((same && policy[0] === 'skip') || (diff && policy[1] === 'skip')) {
-          callback(null, null, [same, diff])
-        } else if (same && policy[0] === 'replace' || diff && policy[1] === 'replace') {
+          callback(null, {
+            type: 'directory',
+            name: target.split('/').pop()
+          }, [same, diff])
+        } else if (same && policy[0] === 'replace' 
+          || diff && policy[1] === 'replace') {
           rimraf(target, err => {
             if (err) return callback(err)
             mkdir(target, policy, err => {
               if (err) return callback(err)
-              callback(null, null, [same, diff])
+              callback(null, { 
+                type: 'directory', 
+                name: target.split('/').pop()
+              }, [same, diff])
             })
           }) 
-        } else if (same && policy[0] === 'rename' || diff && policy[1] === 'rename') {
+        } else if (same && policy[0] === 'rename' 
+          || diff && policy[1] === 'rename') {
           let dirname = path.dirname(target)
           let basename = path.basename(target)
           fs.readdir(dirname, (error, files) => {
             if (error) return callback(error)
             let target2 = path.join(dirname, autoname(basename, files))
-            mkdir(target2, policy, (err, fd) => {
+            mkdir(target2, policy, (err, stat, resolved) => {
               if (err) return callback(err)
-              callback(null, target2, [same, diff])
+              callback(null, stat, [same, diff])
             })
           })
         } else {
@@ -598,7 +606,7 @@ class NFS extends EventEmitter {
                     arr.push({
                       name: entry,
                       type: fileType(stat),
-                      size: stat.size,
+                      size: stat.isFile() ? stat.size : undefined,
                       mtime: stat.mtime.getTime()
                     })
                   }
@@ -823,6 +831,8 @@ class NFS extends EventEmitter {
       openwx(dstFilePath, props.policy, (err, fd, resolved) => {
         if (err) {
           callback(err)
+        } else if (fd === null) { // in case resolved to skip
+          callback(null, null, resolved)
         } else {
           let rs = fs.createReadStream(props.data)
           let ws = fs.createWriteStream(null, { fd })
@@ -858,6 +868,8 @@ class NFS extends EventEmitter {
         openwx(dstFilePath, props.policy, (err, fd, resolved) => {
           if (err) {
             callback(err)
+          } else if (fd === null) {
+            callback(null, null, resolved)
           } else {
             let rs = fs.createReadStream(srcFilePath)
             let ws = fs.createWriteStream(null, { fd })

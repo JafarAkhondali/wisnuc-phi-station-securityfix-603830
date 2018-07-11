@@ -1,3 +1,10 @@
+const EventEmitter = require('events')
+
+const UUID = require('uuid')
+const debug = require('debug')('xsink')
+
+const XCopy = require('./xcopy')
+
 /**
 results for timeline 
 
@@ -79,7 +86,7 @@ entry {
   name:   // directory or file name
 }
 */
-class Sink extends EventEmitter {
+class XSink extends EventEmitter {
 
   constructor (vfs, nfs, user, props) {
     super()
@@ -89,49 +96,62 @@ class Sink extends EventEmitter {
     this.nfs = nfs
     this.user = user
     this.type = props.type
-    this.srcs = props.srcs
+    this.uuid = UUID.v4()
+    this.autoClean = props.autoClean
+
+    this.entries = props.entries
     this.dst = props.dst
     this.task = null
     this.allFinished = false
     this.next()
   }
 
+  /**
+  each entry { drive, dir, name }
+  */
+
   next () {
-    if (this.srcs.length === 0) {
+    if (this.entries.length === 0) {
       this.allFinished = true
       return
     }
 
-    let index = this.srcs.find(x => x.drive !== this.srcs[0].drive || x.pdir !== this.srcs[0].pdir)
-    let entries
-    if (index === -1) {
-      entries = this.srcs
-      this.srcs = []
-    } else {
-      entries = this.srcs.slice(0, index)
-      this.srcs = this.srcs.slice(index)
-    }
-
-    this.task = new Task(this.vfs, this.nfs, this.user, {
+    let { drive, dir, name } = this.entries.shift()
+    this.task = new XCopy(this.vfs, this.nfs, this.user, {
       type: this.type,
-      src: {
-        drive: entries[0].drive,
-        dir: entries[0].pdir,
-      },
+      src: { drive, dir, },
       dst: this.dst,
-      entries: entries.map(x => x.name)
+      entries: [name],
+      policies: {
+        dir: ['rename', 'rename'],
+        file: ['rename', 'rename']
+      }
     })
 
-    this.task.on('finish', () => this.next())
+    this.task.on('finish', () => {
+      debug(`${name} finished`)
+      this.task = null
+      this.next()
+    })
   }
 
   view () {
+    let current = null
+
+    if (this.task) {
+      current = Object.assign({}, this.task.view())
+      delete current.uuid
+      delete current.type
+      delete current.dst
+    }
+
     return { 
+      uuid: this.uuid,
       batch: true,
       type: this.type,
-      srcs: this.srcs,
+      entries: this.entries,
       dst: this.dst,
-      task: this.task ? this.task.view() : null,
+      current,
       allFinished: this.allFinished
     }
   }
@@ -151,4 +171,4 @@ class Sink extends EventEmitter {
   }
 }
 
-module.exports = Sink
+module.exports = XSink

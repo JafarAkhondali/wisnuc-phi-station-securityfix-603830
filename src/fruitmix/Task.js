@@ -1,4 +1,5 @@
 const XCopy = require('./xcopy/xcopy')
+const XSink = require('./xcopy/xsink')
 
 /**
 @param {object} policies - policies provided by client
@@ -16,16 +17,17 @@ const normalizePolicies = policies => {
   if (policies.hasOwnProperty('dir')) {
     let dir = policies.dir
     if (!Array.isArray(dir)) throw Error('invalid dir policy')
-    if (!pss.includes[dir[0]]) throw new Error('invalid same dir policy') 
-    if (!ps.includes[dir[1]]) throw new Error('invalid diff dir policy')
+
+    if (!pss.includes(dir[0])) throw new Error('invalid same dir policy') 
+    if (!ps.includes(dir[1])) throw new Error('invalid diff dir policy')
     obj.dir = [dir[0], dir[1]].map(p => p || null)
   }
 
   if (policies.hasOwnProperty('file')) {
     let file = policies.file
     if (!Array.isArray(file)) throw Error('invalid file policy')
-    if (!ps.includes[file[0]]) throw new Error('invalid same file policy') 
-    if (!ps.includes[file[1]]) throw new Error('invalid diff file policy')
+    if (!ps.includes(file[0])) throw new Error('invalid same file policy') 
+    if (!ps.includes(file[1])) throw new Error('invalid diff file policy')
     obj.file = [file[0], file[1]].map(p => p || null)
   }
 
@@ -53,7 +55,9 @@ class Task {
   GET (user, props, callback) {
     let result = this.tasks.find(item => item.uuid == props.taskUUID)
     if (!result) {
-      callback(new Error('task not found')) 
+      let err = new Error('task not found')
+      err.status = 404
+      callback(err) 
     } else {
       callback(null, result.view())
     }
@@ -78,12 +82,11 @@ class Task {
   @param {object} policies.file - global file policy, defaults to [null, null]
   */
   POST (user, props, callback) {
-    let batch = props.batch === 'true'
-
-    if (batch) {
-      if (!Array.isArray(props.srcs) 
-        || srcs.length === 0 
-        || !srcs.every(src => src && typeof src === 'object')) {
+    let { batch, entries } = props
+    if (batch === true) {
+      if (!Array.isArray(entries) 
+        || entries.length === 0 
+        || !entries.every(ent => ent && typeof ent === 'object')) {
         let err = new Error('invalid srcs')
         err.status = 400 
         return callback(err)
@@ -104,8 +107,7 @@ class Task {
 
     let task, policies
     if (batch) {
-      policies = []
-      task = new XSink(this.vfs, this.nfs, user, Object.assign({}, props, { policies }))
+      task = new XSink(this.vfs, this.nfs, user, Object.assign({}, props))
     } else {
       try {
         policies = normalizePolicies(props.policies)
@@ -114,6 +116,13 @@ class Task {
         return process.nextTick(() => callback(err))
       }
       task = new XCopy(this.vfs, this.nfs, user, Object.assign({}, props, { policies }))
+    }
+
+    if (task.autoClean) {
+      task.on('finish', () => {
+        let index = this.tasks.indexOf(task)
+        if (index !== -1) this.tasks.splice(index, 1)
+      })
     }
 
     this.tasks.push(task)

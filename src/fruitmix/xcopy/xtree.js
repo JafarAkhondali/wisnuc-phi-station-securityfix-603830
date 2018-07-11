@@ -75,8 +75,21 @@ const getConflicts = (t, acc = []) => {
 @param {string} path - tree node path
 @returns node with given path, or null
 */
+
+/**
 const findByPath = (t, path) => 
   t.path === path ? t : t.type === 'directory' ? t.children.find(c => findByPath(c, path)) : null
+*/
+
+const findByPath = (t, path) => {
+  if (t.path === path) return t
+  if (t.type === 'directory') {
+    for (let i = 0; i < t.children.length; i++) {
+      let x = findByPath(t.children[i], path)
+      if (x) return x
+    }
+  }
+}
 
 /**
 copy all copi
@@ -219,6 +232,21 @@ const resolve = (si, path) => {
   })
 }
 
+// remove copied
+const shake = t => {
+  // post visit
+  const visit = n => {
+    n.children.filter(c => c.type === 'directory').forEach(c => visit(c))
+    n.children = n.children.filter(c => {
+      if (c.status === 'copied') return false
+      if (c.type === 'directory' && c.status === 'kept' && c.children.length === 0) return false
+      return true
+    })
+  }
+  visit(t)
+  return t
+}
+
 /**
 
 @param {object} arg
@@ -248,9 +276,12 @@ const generate = arg => {
 
 module.exports = {
   clone,
+  sortF,
+  findByPath,
   init, // init s0 to stopped state
   getConflicts, // find the conflict one
   copymove,
   resolve, // resolve the conflict, generate result
+  shake,
   generate // external method
 }

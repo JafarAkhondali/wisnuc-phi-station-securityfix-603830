@@ -6,28 +6,27 @@ const debug = require('debug')('xfile')
 const XNode = require('./xnode')
 const FingerStream = require('../../lib/finger-stream')
 
-/**
-Base state class for file
-*/
 class State {
   constructor (ctx, ...args) {
     this.ctx = ctx
-    this.mode = this.ctx.mode
-    this.destroyed = false
     this.enter(...args)
-    let state = this.constructor.name
-    debug(`${this.ctx.src.name} entered ${state}`)
-    this.ctx.ctx.reqSched()
 
-    this.ctx.emit('StateEntered', state)
+    debug(`${this.ctx.src.name} entered ${this.constructor.name}`)
+
+    this.ctx.ctx.reqSched()
+    this.ctx.emit('StateEntered', this.constructor.name)
+  }
+
+  isDestroyed () {
+    return this.ctx.isDestroyed()
+  }
+
+  getPolicy () {
+    return this.ctx.getPolicy()
   }
 
   enter () {}
   exit () {}
-
-  getState () {
-    return this.constructor.name
-  }
 
   setState (State, ...args) {
     this.exit()
@@ -36,10 +35,9 @@ class State {
 
   destroy () {
     this.exit()
-    this.destroyed = true
   }
 
-  policyUpdated () {
+  updatePolicy () {
   }
 
   view () {
@@ -48,52 +46,23 @@ class State {
 
 class Working extends State {
   enter () {
-    let user = this.ctx.ctx.user
-    let type = this.ctx.ctx.type
+    let task = this.ctx.ctx
+    let { nfs, vfs, user, type } = task
+    let policy = this.getPolicy()
+    let srcDrive = task.src.drive
+    let dstDrive = task.dst.drive
+    let uuid = this.ctx.src.uuid
+    let name = this.ctx.src.name
+    let pdir = this.ctx.parent
 
-    if (type === 'copy') {
-      let src = {
-        drive: this.ctx.ctx.src.drive,
-        dir: this.ctx.parent.src.uuid,
-        uuid: this.ctx.src.uuid,
-        name: this.ctx.src.name
-      }
-
-      let dst = {
-        drive: this.ctx.ctx.dst.drive,
-        dir: this.ctx.parent.dst.uuid
-      }
-
-      let policy = this.ctx.getPolicy()
-      this.ctx.ctx.vfs.CPFILE(user, { src, dst, policy }, (err, xstat, resolved) => {
-        if (this.destroyed) return
+    if (type === 'copy' || type === 'move') {
+      let src = { drive: srcDrive, dir: pdir.src.uuid, uuid, name }
+      let dst = { drive: dstDrive, dir: pdir.dst.uuid }
+      const f = type === 'copy' ? vfs.CPFILE.bind(vfs) : vfs.MVFILE.bind(vfs)
+      f(user, { src, dst, policy }, (err, xstat, resolved) => {
+        if (this.isDestroyed()) return
         if (err && err.code === 'EEXIST') {
-          // TODO detect policy change and retry
-          this.setState(Conflict, err, policy)
-        } else if (err) {
-          this.setState(Failed, err)
-        } else {
-          this.setState(Finish)
-        }
-      })
-    } else if (type === 'move') {
-      let src = {
-        drive: this.ctx.ctx.src.drive,
-        dir: this.ctx.parent.src.uuid,
-        uuid: this.ctx.src.uuid,
-        name: this.ctx.src.name
-      }
-
-      let dst = {
-        drive: this.ctx.ctx.dst.drive,
-        dir: this.ctx.parent.dst.uuid
-      }
-
-      let policy = this.ctx.getPolicy()
-      this.ctx.ctx.vfs.MVFILE(user, { src, dst, policy }, (err, xstat, resolved) => {
-        if (this.destroyed) return
-        if (err && err.code === 'EEXIST') {
-          this.setState(Conflict, err, policy)
+          this.tryConflict(err, policy)
         } else if (err) {
           this.setState(Failed, err)
         } else {
@@ -101,57 +70,45 @@ class Working extends State {
         }
       })
     } else if (type === 'icopy' || type === 'imove') {
-      let props = {
-        id: this.ctx.ctx.src.drive,
-        path: this.ctx.namepath()
-      }
-
-      this.ctx.ctx.nfs.GET(user, props, (err, srcPath) => {
-        if (this.destroyed) return
+      let props = { id: srcDrive, path: this.ctx.namepath() }
+      nfs.GET(user, props, (err, srcPath) => {
+        if (this.isDestroyed()) return
         if (err) {
           this.setState(Failed, err)
         } else {
-          let dstPath = this.ctx.ctx.vfs.TMPFILE()
-
+          let dstPath = vfs.TMPFILE()
           this.rs = fs.createReadStream(srcPath)
           this.fs = new FingerStream()
           this.ws = fs.createWriteStream(dstPath)
-
           let fingerFinished = false
           let writeStreamFinished = false
 
           const finish = () => {
             if (!fingerFinished || !writeStreamFinished) return
-
-            let policy = this.ctx.getPolicy()
-            let user = this.ctx.ctx.user
             let props = {
-              driveUUID: this.ctx.ctx.dst.drive,
-              dirUUID: this.ctx.parent.dst.uuid,
-              name: this.ctx.src.name,
+              driveUUID: dstDrive,
+              dirUUID: pdir.dst.uuid,
+              name,
               data: dstPath,
               size: this.ws.bytesWritten,
               sha256: this.fs.fingerprint,
               policy
             }
 
-            this.ctx.ctx.vfs.NEWFILE(user, props, (err, stat, resolved) => {
+            vfs.NEWFILE(user, props, (err, stat, resolved) => {
+              if (this.isDestroyed()) return
               if (err && err.code === 'EEXIST') {
-                this.setState(Conflict, err, policy)
+                this.tryConflict(err, policy)
               } else if (err) {
                 this.setState(Failed, err)
-              } else {
-                // TODO rimraf file
-               
+              } else { // TODO rimraf file ???
                 if (type === 'imove') {
-                  let user = this.ctx.ctx.user                 
-                  let props = {
-                    id: this.ctx.ctx.src.drive,
-                    path: this.ctx.namepath()
+                  if (this.isSkipped(policy, resolved)) {
+                    this.setState(Finish)
+                  } else {
+                    let props = { id: srcDrive, path: this.ctx.namepath() }
+                    nfs.DELETE(user, props, () => this.setState(Finish))
                   }
-
-                  // ignore error
-                  this.ctx.ctx.nfs.DELETE(user, props, () => this.setState(Finish))
                 } else {
                   this.setState(Finish)
                 }
@@ -174,45 +131,27 @@ class Working extends State {
         }
       })
     } else if (type === 'ecopy' || type === 'emove') {
-      // src props
-      let props = {
-        driveUUID: this.ctx.ctx.src.drive,
-        dirUUID: this.ctx.parent.src.uuid,
-        uuid: this.ctx.src.uuid,
-        name: this.ctx.src.name
-      }
-
-      // clone src
-      this.ctx.ctx.vfs.CLONE(user, props, (err, data) => {
+      let props = { driveUUID: srcDrive, dirUUID: pdir.src.uuid, uuid, name }
+      vfs.CLONE(user, props, (err, data) => {
+        if (this.isDestroyed()) return
         if (err) {
           this.setState(Failed, err)
         } else {
-          let policy = this.ctx.getPolicy()
-          let props = {
-            id: this.ctx.ctx.dst.drive,
-            path: this.ctx.parent.dstNamePath(), // dir path
-            name: this.ctx.src.name,
-            data,
-            policy
-          }
-
-          this.ctx.ctx.nfs.NEWFILE(user, props, (err, _, resolved) => {
+          let props = { id: dstDrive, path: pdir.dstNamePath(), name, data, policy }
+          nfs.NEWFILE(user, props, (err, _, resolved) => {
+            if (this.isDestroyed()) return
             rimraf(data, () => {})
             if (err && err.code === 'EEXIST') {
-              this.setState(Conflict, err, policy)
+              this.tryConflict(err, policy)
             } else if (err) {
               this.setState(Failed, err)
+            } else if (this.isSkipped(policy, resolved)) {
+              this.setState(Finish)
             } else {
               if (type === 'emove') {
-                let props = {
-                  driveUUID: this.ctx.ctx.src.drive,
-                  dirUUID: this.ctx.parent.src.uuid,
-                  uuid: this.ctx.src.uuid,
-                  name: this.ctx.src.name 
-                }
-
+                let props = { driveUUID: srcDrive, dirUUID: pdir.src.uuid, uuid, name }
                 // ignore error if any
-                this.ctx.ctx.vfs.REMOVE(user, props, () => this.setState(Finish))
+                vfs.REMOVE(user, props, () => this.setState(Finish))
               } else {
                 this.setState(Finish)
               }
@@ -221,20 +160,12 @@ class Working extends State {
         }
       })
     } else if (type === 'ncopy' || type === 'nmove') {
-      if (type === 'nmove' && this.ctx.ctx.src.drive === this.ctx.ctx.dst.drive) { // by rename
-        let user = this.ctx.ctx.user
-        let policy = this.ctx.getPolicy()
-        let props = {
-          id: this.ctx.ctx.src.drive,
-          srcPath: this.ctx.parent.namepath(),
-          dstPath: this.ctx.parent.dstNamePath(),
-          name: this.ctx.src.name,
-          policy
-        }
-
-        this.ctx.ctx.nfs.MVFILE(user, props, (err, _, resolved) => {
+      if (type === 'nmove' && srcDrive === dstDrive) { // by rename
+        let props = { id: srcDrive, srcPath: pdir.namepath(), dstPath: pdir.dstNamePath(), name, policy }
+        nfs.MVFILE(user, props, (err, _, resolved) => {
+          if (this.isDestroyed()) return
           if (err && err.code === 'EEXIST') {
-            this.setState(Conflict, err, policy)
+            this.tryConflict(err, policy)
           } else if (err) {
             this.setState(Failed, err)
           } else {
@@ -242,23 +173,16 @@ class Working extends State {
           }
         })
       } else { // by copy + optional remove
-        let user = this.ctx.ctx.user
-        let policy = this.ctx.getPolicy()
-        let src = {
-          drive: this.ctx.ctx.src.drive,
-          dir: this.ctx.parent.namepath(),
-          name: this.ctx.src.name 
-        }
-        let dst = {
-          drive: this.ctx.ctx.dst.drive,
-          dir: this.ctx.parent.dstNamePath(),
-        }
-
-        this.ctx.ctx.nfs.CPFILE(user, { src, dst, policy }, (err, streams, resolved) => {
+        let src = { drive: srcDrive, dir: pdir.namepath(), name }
+        let dst = { drive: dstDrive, dir: pdir.dstNamePath() }
+        nfs.CPFILE(user, { src, dst, policy }, (err, streams, resolved) => {
+          if (this.isDestroyed()) return
           if (err && err.code === 'EEXIST') {
-            this.setState(Conflict, err, policy)
+            this.tryConflict(err, policy)
           } else if (err) {
             this.setState(Failed, err)
+          } else if (this.isSkipped(policy, resolved)) {
+            this.setState(Finish)
           } else {
             let { rs, ws } = streams
 
@@ -276,14 +200,11 @@ class Working extends State {
             ws.on('error', error)
             ws.on('finish', () => {
               if (type === 'nmove') {
-                let props = {
-                  id: this.ctx.ctx.src.drive,
-                  path: this.ctx.namepath()
-                } 
+                let props = { id: srcDrive, path: this.ctx.namepath() }
                 // ignore error
-                this.ctx.ctx.nfs.DELETE(user, props, () => this.setState(Finish))
+                nfs.DELETE(user, props, () => this.setState(Finish))
               } else {
-                this.setState(Finish)  
+                this.setState(Finish)
               }
             })
             rs.pipe(ws)
@@ -291,7 +212,22 @@ class Working extends State {
         })
       }
     } else {
-      throw new Error('invalid task type') // TODO
+      let err = new Error(`invalid task type ${type}`)
+      this.setState(Failed, err)
+    }
+  }
+
+  isSkipped (p, r) {
+    return ((p[0] === 'skip' && r[0]) || (p[1] === 'skip' && r[1]))
+  }
+
+  // err.code must be EEXIST
+  tryConflict (err, policy) {
+    let p = this.getPolicy()
+    if (p[0] === policy[0] && p[1] === policy[1]) {
+      this.setState(Conflict, err, policy)
+    } else {
+      this.setState(Working)
     }
   }
 }
@@ -312,23 +248,25 @@ class Conflict extends State {
     }
   }
 
-  policyUpdated () {
+  updatePolicy (policy) {
+    if (policy) {
+      let p = this.ctx.policy
+      p[0] = policy[0] || p[0]
+      p[1] = policy[1] || p[1]
+    }
     this.setState(Working)
   }
 }
 
 class Failed extends State {
   enter (err) {
-    if (process.env.LOGE) debug(err)
+    if (process.env.LOGE) console.log('xfile failed', err)
     this.error = err
   }
 }
 
 class Finish extends State {}
 
-/**
-The base class of a file subtask in xcopy
-*/
 class XFile extends XNode {
   /**
   @param {object} ctx - task context
@@ -339,6 +277,7 @@ class XFile extends XNode {
   */
   constructor (ctx, parent, src) {
     super(ctx, parent)
+    Object.defineProperty(this, 'type', { value: 'file', writable: false })
     this.src = src
     this.policy = [null, null]
     this.state = new Working(this)
@@ -349,17 +288,6 @@ class XFile extends XNode {
       this.policy[0] || this.ctx.policies.file[0] || null,
       this.policy[1] || this.ctx.policies.file[1] || null
     ]
-  }
-
-  updatePolicy (policy) {
-    if (this.state.constructor.name !== 'Conflict') return
-    this.policy[0] = policy[0] || this.policy[0]
-    this.policy[1] = policy[1] || this.policy[1]
-    this.state.policyUpdated()
-  }
-
-  policyUpdated (policy) {
-    this.state.policyUpdated()
   }
 }
 
