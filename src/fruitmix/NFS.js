@@ -409,6 +409,11 @@ class NFS extends EventEmitter {
     })
 
     this.drives = [...vols, ...blks]
+    this.emit('usb', blks.filter(x => x.isUSB).map(x => ({
+      name: x.name.slice(2),
+      mountpoint: x.mountpoint,
+      readOnly: !!x.isMountedRO
+    })))
   }
 
   resolveId (user, props, callback) {
@@ -483,7 +488,8 @@ class NFS extends EventEmitter {
     const drvToPhy = drv => {
       let phy = {
         id: drv.isVolume ? drv.uuid : drv.name,
-        type: drv.fileSystemType
+        type: drv.fileSystemType,
+        readOnly: drv.isMountedRO
       }
 
       if (drv.isVolume && drv.uuid === this.volumeUUID) phy.isFruitFS = true
