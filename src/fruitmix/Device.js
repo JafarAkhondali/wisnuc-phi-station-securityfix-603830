@@ -72,9 +72,10 @@ const hardwareVersion = () => {
   return '1.0.0'
 }
 
-let releases
+let releases, swVer
 try {
   releases = JSON.parse(fs.readFileSync('/mnt/reserved/fw_ver_release.json').toString())
+  swVer = fs.readFileSync('/etc/version').toString().trim()
 } catch(e) {
   console.log('==========================')
   console.log('Error: ENOENT fw_ver_release')
@@ -216,27 +217,30 @@ class Device {
       }
     }
     debug('sleepConf update')
-    clearInterval(this.sleepModeInterval)
-    if (this.sleepConf) {
-      this.sleepModeInterval = setInterval(() => {
-        let sleepConf = this.sleepConf
-        debug(' sleep interval ')
-        if (!sleepConf) {
-          child.exec('kill -SIGUSR2 `pidof fanlogic`​', err => debug('start nomal mode fanlogic, err: ', err))
-          child.exec('kill -SIGUSR2 `pidof ledlogic`', err => debug('start nomal mode ledlogic, err: ', err))
-        } else {
+    clearTimeout(this.sleepModeTimer)
+    debug('************************')
+    let fanPid, ledPid
+    try {
+      fanPid = child.execSync('pidof fanlogic').toString().trim()
+      ledPid = child.execSync('pidof ledlogic').toString().trim()
+      if (this.sleepConf) {
           let { start, end } = this.sleepConf
           let shouldSleepMode = time_range(start, end)
-          child.exec('kill -SIGUSR' + (shouldSleepMode ? '1' : '2') + ' `pidof fanlogic`​', err => 
-            debug('start sleep mode, err: ', err))
-          child.exec('kill -SIGUSR' + (shouldSleepMode ? '1' : '2') + ' `pidof ledlogic`​', err => 
-            debug('start sleep mode, err: ', err))
-        }
-      }, 60 * 1000)
-    } else {
-      child.exec('kill -SIGUSR2 `pidof fanlogic`​', err => debug('start nomal mode fanlogic, err: ', err))
-      child.exec('kill -SIGUSR2 `pidof ledlogic`', err => debug('start nomal mode ledlogic, err: ', err))
+          let signal = '-SIGUSR' + (shouldSleepMode ? '1' : '2')
+          debug('************************')
+          debug('************  ', shouldSleepMode)
+          debug('************************')
+          child.spawnSync('kill', [signal, fanPid])
+          child.spawnSync('kill', [signal, ledPid])
+      } else {
+          child.spawnSync('kill', ['-SIGUSR2​', fanPid])
+          child.spawnSync('kill', ['-SIGUSR2', ledPid])
+      }
+    } catch(e) {
+      debug(e)
     }
+
+    this.sleepModeTimer = setTimeout(this.sleepConfUpdate.bind(this), 1000 * 60)
   }
 
   startUpdateNetDev() {
@@ -421,7 +425,7 @@ class Device {
     return {
       model: (releases && releases.model) || deviceModel(),
       sn: deviceSN(),
-      swVersion: (releases && releases.fw_ver) || softwareVersion(),
+      swVersion: swVer || softwareVersion(),
       hwVersion: (releases && releases.hw_ver) || hardwareVersion()
     }
   }
@@ -501,7 +505,7 @@ class Device {
         return callback(Object.assign(new Error('error start or end'), { status: 400 }))
       } 
       let startArgs = start.split(':').map(x => x.trim()).filter(x => Number.isInteger(parseInt(x)) &&  parseInt(x) >= 0)
-      let endArgs = end.split(':').map(x => x.trim()).filter(x => Number.isInteger(parseInt(x)))
+      let endArgs = end.split(':').map(x => x.trim()).filter(x => Number.isInteger(parseInt(x)) &&  parseInt(x) >= 0)
       if (startArgs.length !== 2 || endArgs.length !== 2) {
         return callback(Object.assign(new Error('start or end format error'), { status: 400 }))
       }

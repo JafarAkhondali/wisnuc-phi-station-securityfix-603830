@@ -516,14 +516,25 @@ class NFS extends EventEmitter {
                 phy.usage = {
                   total: parseInt(xs[1]),
                   used: parseInt(xs[2]),
-                  available: parseInt(xs[3]) 
+                  available: parseInt(xs[3])
                 }
+              }
+              if (drv.isVolume && drv.isBtrfs) {
+                let total
+                let sizeArr = drv.devices.map(d => d.size).sort((a, b) => a > b ? 1 : a < b ? -1 : 0)
+                if (drv.usage && drv.usage.data && drv.usage.data.mode.toLowerCase() === 'raid1') {
+                  let max = sizeArr.pop()
+                  let offmax = sizeArr.reduce((acc, a) => a + acc, 0)
+                  total = max > offmax ? offmax : (offmax + max)/2
+                } else {
+                  total = sizeArr.reduce((acc, a) => a + acc, 0)
+                }
+                phy.usage.total = total / 1024
               }
             }
           } else {
             console.log(err)
           }
-
           if (!--count) callback(null, arr)
         })
       })
@@ -764,6 +775,9 @@ class NFS extends EventEmitter {
   /**
   @param {object} user
   @param {object} props
+  @param {object} props.policies
+  @param {object} props.policies.dir
+  @param {object} props.policies.file
   */
   PATCH (user, props, callback) {
     if (props.op) { // TODO TO BE REMOVED
@@ -772,12 +786,65 @@ class NFS extends EventEmitter {
       }
       return callback(new Error('invalid op'))
     } else { 
+      let policy = props.policy
+      if (policy) {
+        let valids = [undefined, null, 'skip', 'replace', 'rename']
+        if (!Array.isArray(policy) || 
+          valids.includes(policy[0]) || 
+          valids.includes(policy[1])) {
+          let err = new Error('invalid policy')
+          err.status = 400
+          return process.nextTick(() => callback(err))
+        }
+      } else {
+        policy = [null, null]
+      }
+
       this.resolvePaths(user, props, (err, paths) => {
         if (err) return callback(err)
         let { oldPath, newPath } = paths
-        fs.rename(oldPath, newPath, err => {
-          if (err) err.status = 403
-          callback(err)
+        let policy = props.policy || [null, null]
+  
+        fs.lstat(oldPath, (err, stat) => {
+          if (err) {
+            if (err.code === 'ENOENT') {
+              let err = new Error('old path not found')
+              err.code = 'ENOENT'
+              err.status = 404
+              callback(err)
+            } else if (err.code === 'ENOTDIR') {
+              let err = new Error('old path invalid')
+              err.code = 'ENOTDIR'
+              err.status = 400
+              callback(err)
+            } else {
+              callback(err)
+            }
+          } else {
+            if (stat.isDirectory()) {
+              mvdir(oldPath, newPath, policy, (err, _, resolved) => {
+                if (err) {
+                  if (err.code === 'EEXIST') err.status = 403
+                  callback(err) 
+                } else {
+                  callback(null, { policy, resolved })
+                }
+              })
+            } else if (stat.isFile()) {
+              mvfile(oldPath, newPath, policy, (err, _, resolved) => {
+                if (err) {
+                  if (err.code === 'EEXIST') err.status = 403
+                  callback(err) 
+                } else {
+                  callback(null, { policy, resolved })
+                }
+              })
+            } else {
+              let err = EUnsupported(stat)   
+              err.status = 403
+              callback(err)
+            }
+          }
         })
       })
     }
@@ -811,6 +878,12 @@ class NFS extends EventEmitter {
         })
       }
     })
+  }
+
+  REMOVE (user, props, callback) {
+    let id = props.drive
+    let p = path.join(props.dir, props.name)
+    this.DELETE(user, { id, path: p }, callback)
   }
 
 
