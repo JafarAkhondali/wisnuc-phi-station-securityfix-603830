@@ -181,7 +181,16 @@ const retrieveSmbUsersAsync = async () => {
 const processDrivesAsync = async (users, drives) => {
   // TODO check names
   // return drives.filter(drive => drive.smb)
-  return drives
+  let ds = drives.filter(drive => !drive.isDeleted)
+  let xs = ds.map(d => {
+    if (d.type === 'private') {
+      return users.find(u => u.uuid === d.owner).phoneNumber
+    } else {
+      return d.tag === 'built-in' ? 'built-in' : d.label
+    }
+  })
+
+  return ds
 }
 
 // smb.conf global section
@@ -226,8 +235,18 @@ const privateShare = (froot, users, drive) => {
 
 // smb.conf share section for public share
 // share name is drive label or first 8 characters of drive uuid
-const publicShare = (froot, users, drive) => {
-  let name = drive.label || drive.uuid.slice(0, 8)
+const publicShare = (froot, users, drive, drives) => {
+  let name
+  if (drive.tag === 'built-in') {
+    name = '默认共享盘'
+  } else if (drive.label && drive.label !== '默认共享盘') {
+    name = drive.label
+  } else {
+    let ps = drives.filter(x => x.type === 'public' && !x.isDeleted && x.tag !== 'built-in')
+    name = '共享盘 ' + (ps.indexOf(drive) + 1)
+  }
+
+  // let name = drive.label || drive.uuid.slice(0, 8)
   let writelist = drive.writelist
     .map(uuid => users.find(u => u.uuid === uuid))
     .filter(u => !!u)
@@ -277,7 +296,7 @@ const genSmbConfAsync = async (froot, users, drives, usbs) => {
     if (drive.type === 'private') {
       return t + privateShare(froot, users, drive)
     } else {
-      return t + publicShare(froot, users, drive)
+      return t + publicShare(froot, users, drive, drives)
     }
   }, text)
 
